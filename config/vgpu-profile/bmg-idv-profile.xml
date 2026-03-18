@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<vGPUProfile>
+    <version>1.1</version>
+    
+    <PFResources>
+        <Default>MinimumPFResources</Default>
+        <Profile>
+            <MinimumPFResources>
+                <LocalMemoryEccOn>4294967296</LocalMemoryEccOn>
+                <LocalMemoryEccOff>4294967296</LocalMemoryEccOff>
+                <Contexts>8192</Contexts>
+                <Doorbells>16</Doorbells>
+                <GGTTSize>805306368</GGTTSize>
+            </MinimumPFResources>
+        </Profile>
+    </PFResources>
+    
+    <vGPUResources>
+        <Default/>
+        <Profile>
+            <Bmg_24>
+                <VFCount>1</VFCount>
+                <LocalMemoryEccOff>21474836480</LocalMemoryEccOff>
+                <LocalMemoryEccOn>18253611008</LocalMemoryEccOn>
+                <Contexts>8192</Contexts>
+                <Doorbells>240</Doorbells>
+                <GGTTSize>671088640</GGTTSize>
+            </Bmg_24>
+            <Bmg_12>
+                <VFCount>2</VFCount>
+                <LocalMemoryEccOff>10737418240</LocalMemoryEccOff>
+                <LocalMemoryEccOn>9126805504</LocalMemoryEccOn>
+                <Contexts>8192</Contexts>
+                <Doorbells>120</Doorbells>
+                <GGTTSize>671088640</GGTTSize>
+            </Bmg_12>
+            <Bmg_8>
+                <VFCount>3</VFCount>
+                <LocalMemoryEccOff>7158278826</LocalMemoryEccOff>
+                <LocalMemoryEccOn>6084537002</LocalMemoryEccOn>
+                <Contexts>8192</Contexts>
+                <Doorbells>80</Doorbells>
+                <GGTTSize>671088640</GGTTSize>
+            </Bmg_8>
+            <Bmg_6>
+                <VFCount>4</VFCount>
+                <LocalMemoryEccOff>5368709120</LocalMemoryEccOff>
+                <LocalMemoryEccOn>4563402752</LocalMemoryEccOn>
+                <Contexts>8192</Contexts>
+                <Doorbells>60</Doorbells>
+                <GGTTSize>671088640</GGTTSize>
+            </Bmg_6>
+        </Profile>
+    </vGPUResources>
+    
+    <vGPUScheduler>
+        <Default>Edge_DefaultIDV_GPUTimeSlicing</Default>
+        <Profile>
+            <Edge_DefaultIDV_GPUTimeSlicing>
+                <GPUTimeSlicing>
+                    <ScheduleIfIdle>false</ScheduleIfIdle>
+                    <PFExecutionQuantum>25</PFExecutionQuantum>
+                    <PFPreemptionTimeout>500000</PFPreemptionTimeout>
+                    <VFAttributes>
+                        <VF VFCount="1">
+                            <ExecutionQuantum>25</ExecutionQuantum>
+                            <PreemptionTimeout>500000</PreemptionTimeout>
+                        </VF>
+                        <VF VFCount="2">
+                            <ExecutionQuantum>25</ExecutionQuantum>
+                            <PreemptionTimeout>500000</PreemptionTimeout>
+                        </VF>
+                        <VF VFCount="3">
+                            <ExecutionQuantum>25</ExecutionQuantum>
+                            <PreemptionTimeout>500000</PreemptionTimeout>
+                        </VF>
+                        <VF VFCount="4">
+                            <ExecutionQuantum>25</ExecutionQuantum>
+                            <PreemptionTimeout>500000</PreemptionTimeout>
+                        </VF>
+                    </VFAttributes>
+                </GPUTimeSlicing>
+            </Edge_DefaultIDV_GPUTimeSlicing>
+        </Profile>
+    </vGPUScheduler>
+    
+    <vGPUSecurity>
+        <Default>Disabled</Default>
+        <Profile>
+            <Disabled>
+                <ResetAfterVfSwitch>false</ResetAfterVfSwitch>
+                <GuCSamplingPeriod>0</GuCSamplingPeriod>
+                <GuCThresholdCATError>0</GuCThresholdCATError>
+                <GuCThresholdPageFault>0</GuCThresholdPageFault>
+                <GuCThresholdH2GStorm>0</GuCThresholdH2GStorm>
+                <GuCThresholdDbStorm>0</GuCThresholdDbStorm>
+                <GuCThresholdGTIrqStorm>0</GuCThresholdGTIrqStorm>
+                <GuCThresholdEngineReset>0</GuCThresholdEngineReset>
+            </Disabled>
+        </Profile>
+    </vGPUSecurity>
+</vGPUProfile>
