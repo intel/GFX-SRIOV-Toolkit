@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Intel Corporation
+# All rights reserved.
 
 ################################################################################
 # Create Ubuntu VM Script

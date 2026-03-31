@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Intel Corporation
+# All rights reserved.
 
 # Create Windows VM Script
 # Builds a VM disk image and boots Windows installer with QEMU/KVM.

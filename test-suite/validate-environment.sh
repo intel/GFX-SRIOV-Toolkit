@@ -1,4 +1,8 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Intel Corporation
+# All rights reserved.
+
 # SRIOV System Health Check Script (Shell)
 # Performs health checks on Linux/Ubuntu systems for GPU, graphics and SRIOV components
 

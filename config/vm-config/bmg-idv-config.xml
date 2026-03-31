@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Copyright (c) 2026 Intel Corporation -->
+<!-- All rights reserved. -->
 <vm_configuration>
     <metadata>
         <version>1.2</version>
