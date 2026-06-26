@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Total System Resources for iGPU (SPICE profile) -->
+<!--
+    Total GGTT Size: 4G
+    Total Doorbell Size: 256
+    Total Context Size: 65536
+    Some GGTT size is reserved for PF after boot, so the total GGTT size for VFs is 3328MB
+-->
+<vGPUProfile>
+    <version>1.1</version>
+
+    <PFResources>
+        <Default>MinimumPFResources</Default>
+        <Profile>
+            <MinimumPFResources>
+                <Contexts>8192</Contexts>
+                <Doorbells>16</Doorbells>
+                <GGTTSize>805306368</GGTTSize> <!-- 768 MB -->
+            </MinimumPFResources>
+        </Profile>
+    </PFResources>
+
+    <vGPUResources>
+        <Default/>
+        <Profile>
+            <igpu_profile_1>
+                <VFCount>1</VFCount>
+                <Contexts>8192</Contexts>
+                <Doorbells>240</Doorbells>
+                <GGTTSize>2684354560</GGTTSize> <!-- 2560 MB per VF -->
+            </igpu_profile_1>
+            <igpu_profile_2>
+                <VFCount>2</VFCount>
+                <Contexts>8192</Contexts>
+                <Doorbells>120</Doorbells>
+                <GGTTSize>1342177280</GGTTSize> <!-- 1280 MB per VF -->
+            </igpu_profile_2>
+            <igpu_profile_3>
+                <VFCount>3</VFCount>
+                <Contexts>8192</Contexts>
+                <Doorbells>80</Doorbells>
+                <GGTTSize>805306368</GGTTSize> <!-- 768 MB per VF (128 MB aligned) -->
+            </igpu_profile_3>
+            <igpu_profile_4>
+                <VFCount>4</VFCount>
+                <Contexts>8192</Contexts>
+                <Doorbells>60</Doorbells>
+                <GGTTSize>671088640</GGTTSize> <!-- 640 MB per VF -->
+            </igpu_profile_4>
+            <igpu_profile_5>
+                <VFCount>5</VFCount>
+                <Contexts>8192</Contexts>
+                <Doorbells>48</Doorbells>
+                <GGTTSize>536870912</GGTTSize> <!-- 512 MB per VF -->
+            </igpu_profile_5>
+            <igpu_profile_6>
+                <VFCount>6</VFCount>
+                <Contexts>8192</Contexts>
+                <Doorbells>40</Doorbells>
+                <GGTTSize>402653184</GGTTSize> <!-- 384 MB per VF (128 MB aligned) -->
+            </igpu_profile_6>
+            <igpu_profile_7>
+                <VFCount>7</VFCount>
+                <Contexts>8064</Contexts>
+                <Doorbells>32</Doorbells>
+                <GGTTSize>268435456</GGTTSize> <!-- 256 MB per VF (128 MB aligned) -->
+            </igpu_profile_7>
+        </Profile>
+    </vGPUResources>
+
+    <vGPUScheduler>
+        <Default>Edge_DefaultIDV_GPUTimeSlicing</Default>
+        <Profile>
+            <Edge_DefaultIDV_GPUTimeSlicing>
+                <GPUTimeSlicing>
+                    <ScheduleIfIdle>false</ScheduleIfIdle>
+                    <PFExecutionQuantum>25</PFExecutionQuantum>
+                    <PFPreemptionTimeout>500000</PFPreemptionTimeout>
+                    <VFAttributes>
+                        <VF VFCount="1">
+                            <ExecutionQuantum>25</ExecutionQuantum>
+                            <PreemptionTimeout>500000</PreemptionTimeout>
+                        </VF>
+                        <VF VFCount="2">
+                            <ExecutionQuantum>25</ExecutionQuantum>
+                            <PreemptionTimeout>500000</PreemptionTimeout>
+                        </VF>
+                        <VF VFCount="3">
+                            <ExecutionQuantum>25</ExecutionQuantum>
+                            <PreemptionTimeout>500000</PreemptionTimeout>
+                        </VF>
+                        <VF VFCount="4">
+                            <ExecutionQuantum>25</ExecutionQuantum>
+                            <PreemptionTimeout>500000</PreemptionTimeout>
+                        </VF>
+                        <VF VFCount="5">
+                            <ExecutionQuantum>25</ExecutionQuantum>
+                            <PreemptionTimeout>500000</PreemptionTimeout>
+                        </VF>
+                        <VF VFCount="6">
+                            <ExecutionQuantum>25</ExecutionQuantum>
+                            <PreemptionTimeout>500000</PreemptionTimeout>
+                        </VF>
+                        <VF VFCount="7">
+                            <ExecutionQuantum>25</ExecutionQuantum>
+                            <PreemptionTimeout>500000</PreemptionTimeout>
+                        </VF>
+                    </VFAttributes>
+                </GPUTimeSlicing>
+            </Edge_DefaultIDV_GPUTimeSlicing>
+        </Profile>
+    </vGPUScheduler>
+
+    <vGPUSecurity>
+        <Default>Disabled</Default>
+        <Profile>
+            <Disabled>
+                <ResetAfterVfSwitch>false</ResetAfterVfSwitch>
+                <GuCSamplingPeriod>0</GuCSamplingPeriod>
+                <GuCThresholdCATError>0</GuCThresholdCATError>
+                <GuCThresholdPageFault>0</GuCThresholdPageFault>
+                <GuCThresholdH2GStorm>0</GuCThresholdH2GStorm>
+                <GuCThresholdDbStorm>0</GuCThresholdDbStorm>
+                <GuCThresholdGTIrqStorm>0</GuCThresholdGTIrqStorm>
+                <GuCThresholdEngineReset>0</GuCThresholdEngineReset>
+            </Disabled>
+        </Profile>
+    </vGPUSecurity>
+</vGPUProfile>

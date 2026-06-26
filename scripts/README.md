@@ -2,12 +2,14 @@
 
 This directory contains the VM lifecycle and SR-IOV provisioning scripts used by the toolkit.
 
-## Script Index
+## Repository Structure
 
-- `create-vm-ubuntu.sh`: Create/install an Ubuntu VM image (or boot an existing one)
-- `create-vm-win.sh`: Create/install a Windows VM image
-- `provision-sriov.sh`: Enable/disable SR-IOV and apply vGPU resource profiles
-- `launch-vm.sh`: Launch VMs from XML configuration
+| No. | Area | Description | Key Files |
+| --- | --- | --- | --- |
+| 1 | **VM Creation** | Create and prepare guest virtual machine images | `scripts/create-vm-ubuntu.sh`<br>`scripts/create-vm-win.sh` |
+| 2 | **SR-IOV Provisioning** | Configure Virtual Functions (VFs) and GPU resource allocation | `scripts/provision-sriov.sh`<br>`config/vgpu-profile/` |
+| 3 | **VM Launch (QEMU CMDLINE)** | Launch and manage VMs using direct QEMU-based workflow | `scripts/launch-vm.sh` |
+| 4 | **VM Launch (Libvirt)** | Launch and manage VMs using libvirt (persistent domains, multi-display) | `scripts/launch-vm-libvirt.sh` |
 
 ## Prerequisites
 
@@ -17,30 +19,31 @@ This directory contains the VM lifecycle and SR-IOV provisioning scripts used by
 - `sudo` access for provisioning/host setup tasks
 - OVMF firmware available (for UEFI VM boot)
 
-## 1) Ubuntu VM Creation
+## 1) VM Creation
+
+### 1.1) Ubuntu VM Creation
 
 Script: `scripts/create-vm-ubuntu.sh`
 
 Purpose:
 - Creates a new Ubuntu VM from local ISO or auto-download URL
-- Supports unattended install flow and optional post-boot SR-IOV setup
+- Supports unattended install flow with optional post-setup reboot
 - Can also boot an existing image (`--vm-image` mode)
 
 Common options:
 - `-h, --help`: Show help
 - `-i, --iso-path FILE`: Ubuntu installer ISO path (optional if using download URL/default)
 - `--download_url URL`: ISO URL (default points to Ubuntu 24.04.4 desktop)
-- `-o, --output-dir DIR`: Output directory for images/downloads (default: `./vm_images`)
+- `-o, --output-dir DIR`: Output directory for images/downloads (default: `/data/vm-images`)
 - `-n, --vm-name NAME`: VM name/image prefix (default: `ubuntu24_1`)
 - `-s, --vm-size SIZE`: Disk size (default: `50G`)
-- `-m, --memory MB`: Memory in MB (default variable: `8192`)
+- `-m, --memory MB`: Memory in MB (default: `8192`)
 - `-c, --vcpus NUM`: vCPU count (default: `4`)
 - `--vm-username NAME`: Guest username (default: `user`)
 - `--vm-password PASS`: Guest password (default: `user1234`)
 - `--vm-image PATH`: Existing image path (required for direct boot or `--force-install`)
 - `--force-install`: Reinstall using provided `--vm-image`
-- `--vm-setup`: Run `installer/install-host.sh virtualization --automated` inside guest
-- `--vm-reboot`: Reboot after `--vm-setup` (otherwise guest is shut down)
+- `--vm-reboot`: Reboot after automatic setup completes (otherwise guest is shut down)
 - `--proxy URL`: Proxy pass-through for guest setup/downloads
 
 Examples:
@@ -51,17 +54,17 @@ Examples:
 # Local ISO with defaults
 ./scripts/create-vm-ubuntu.sh -i ./ubuntu-24.04.4-desktop-amd64.iso
 
-# Local ISO + provisioning in guest + reboot
+# Local ISO with custom credentials + reboot
 ./scripts/create-vm-ubuntu.sh \
   -i /path/to/ubuntu-24.04.4-desktop-amd64.iso \
   --vm-username myuser --vm-password MyPass123 \
-  --vm-setup --vm-reboot
+  --vm-reboot
 
 # Boot existing image only
 ./scripts/create-vm-ubuntu.sh --vm-image /path/to/ubuntu.img
 ```
 
-## 2) Windows VM Creation
+### 1.2) Windows VM Creation
 
 Script: `scripts/create-vm-win.sh`
 
@@ -73,7 +76,7 @@ Common options:
 - `-h, --help`: Show help
 - `-i, --iso-path FILE`: Windows installer ISO path (required)
 - `-n, --vm-name NAME`: VM name (default: `win11_1`)
-- `-o, --output-dir DIR`: Output directory (default: `./vm_images`)
+- `-o, --output-dir DIR`: Output directory (default: `/data/vm-images`)
 - `-s, --vm-size SIZE`: Disk size (default: `100G`)
 - `-m, --memory MB`: Memory in MB (default: `4096`)
 - `-c, --vcpus NUM`: vCPU count (default: `4`)
@@ -89,7 +92,7 @@ Examples:
 ./scripts/create-vm-win.sh -i /path/to/windows.iso -m 8192 -c 8
 ```
 
-## 3) SR-IOV Provisioning
+## 2) SR-IOV Provisioning
 
 Script: `scripts/provision-sriov.sh`
 
@@ -112,16 +115,13 @@ Examples:
 sudo ./scripts/provision-sriov.sh -n 4
 
 # Enable 2 VFs with custom file reading from xml
-sudo ./scripts/provision-sriov.sh -n 2 -c ../config/vgpu-profile/bmg-idv-config.xml
+sudo ./scripts/provision-sriov.sh -n 2 -c config/vgpu-profile/bmg-idv-profile.xml
 
 # Disable SR-IOV
 sudo ./scripts/provision-sriov.sh --disable
 ```
 
-Profile details:
-- `config/vgpu-profile/README.md`
-
-## 4) VM Launch From XML
+## 3) VM Launch (QEMU CMDLINE)
 
 Script: `scripts/launch-vm.sh`
 
@@ -152,6 +152,33 @@ Examples:
 VM config details:
 - `config/vm-config/README.md`
 
+## 4) VM Launch (Libvirt)
+
+Script: `scripts/launch-vm-libvirt.sh`
+
+Purpose:
+- Provides an alternative launch path using libvirt (virsh) alongside direct-QEMU `launch-vm.sh`
+- Enables persistent VM domain management, NVRAM isolation, and multi-display support
+- Uses the same XML configuration files as `launch-vm.sh`
+
+Examples:
+```bash
+# Launch all VMs
+./scripts/launch-vm-libvirt.sh -c config/vm-config/bmg-idv-config.xml
+
+# Launch first 2 VMs
+./scripts/launch-vm-libvirt.sh -c config/vm-config/bmg-idv-config.xml -n 2
+
+# Launch a specific VM by ID
+./scripts/launch-vm-libvirt.sh -c config/vm-config/bmg-idv-config.xml -d 1
+
+# Launch VMs and open virt-manager for interactive management
+./scripts/launch-vm-libvirt.sh -c config/vm-config/bmg-idv-config.xml --virt-manager
+
+# Define VMs in libvirt without starting them
+./scripts/launch-vm-libvirt.sh -c config/vm-config/bmg-idv-config.xml --define-only
+```
+
 ## Typical End-to-End Flow
 
 ```bash
@@ -166,12 +193,6 @@ sudo ./scripts/provision-sriov.sh -n 4
 # 3) Launch VM(s) from XML
 ./scripts/launch-vm.sh -c config/vm-config/bmg-idv-config.xml -n 1
 ```
-
-## Verification Utilities
-
-SR-IOV readback/validation scripts are in `test-suite/`:
-- `test-suite/read-sriov-resources.sh`
-- `test-suite/validate-environment.sh`
 
 ## License
 

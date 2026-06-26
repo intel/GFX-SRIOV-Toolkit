@@ -117,8 +117,8 @@ start_tpm_service() {
         --pid file="$swtpm_pid_file" \
         --daemon
 
-    local i
-    for i in {1..10}; do
+    local _
+    for _ in {1..10}; do
         [[ -S "$tpm_socket_file" ]] && return 0
         sleep 1
     done
@@ -132,8 +132,8 @@ auto_press_boot_key() {
 
     # Wait for QMP socket creation, then send key presses several times to
     # improve chances of catching the brief Windows DVD boot prompt.
-    local i
-    for i in {1..15}; do
+    local _
+    for _ in {1..15}; do
         [[ -S "$qmp_socket" ]] && break
         sleep 1
     done
@@ -141,7 +141,7 @@ auto_press_boot_key() {
     [[ -S "$qmp_socket" ]] || return 0
 
     sleep 2
-    for i in {1..8}; do
+    for _ in {1..8}; do
         printf '{"execute":"qmp_capabilities"}\n{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"spc"}]}}\n{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"ret"}]}}\n' \
             | socat - UNIX-CONNECT:"$qmp_socket" >/dev/null 2>&1 || true
         sleep 1

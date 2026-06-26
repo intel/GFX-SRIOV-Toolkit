@@ -104,7 +104,10 @@ VM_PASSWORD="user1234"
 PROXY_URL=""
 FORCE_INSTALL=false
 REBOOT_VM=false
+USE_DKMS=false
+USE_INTERNAL=false
 SHOW_HELP=false
+USE_QCOW2=false
 OUTPUT_VM_IMAGE=""
 ISO_DOWNLOAD_MODE=false
 TRACKED_ISO_PATH=""
@@ -142,6 +145,9 @@ show_help() {
     echo "  --force-install          Overwrite existing VM disk and re-run the installer"
     echo "  --vm-reboot              Reboot the VM after automatic setup completes"
     echo "                           (default without this flag: shutdown after setup)"
+    echo "  --qcow2                  Create disk image in qcow2 format (for libvirt/virsh usage)"
+    echo "                           Default: raw format (.img) for direct QEMU launch"
+    echo "  --dkms                   Use virtualization-dkms install mode instead of virtualization"
     echo "  --proxy <url>            HTTP/HTTPS proxy URL (e.g., http://proxy.example.com:911)"
     echo
     echo -e "${BOLD}Examples:${NC}"
@@ -166,6 +172,9 @@ show_help() {
     echo "    ./create-vm-ubuntu.sh --vm-image /path/to/ubuntu.img \\"
     echo "               -i /path/to/ubuntu-24.04.4-desktop-amd64.iso \\"
     echo "               --force-install"
+    echo
+    echo -e "  ${BOLD}${CYAN}Create qcow2 image for libvirt (instead of raw .img for QEMU):${NC}"
+    echo "    ./create-vm-ubuntu.sh -i /path/to/ubuntu-24.04.4-desktop-amd64.iso --qcow2"
     echo
 }
 
@@ -440,10 +449,23 @@ create_vm_disk() {
         messages+=("Creating VM disk image: ${vm_img}")
         messages+=("Size: ${vm_size}")
 
-        if ! qemu-img create -f raw -o size="${vm_size}" "$vm_img"; then
-            messages+=("Failed to create VM disk image")
-            print_message "Create VM Disk" "${messages[@]}"
-            return 1
+        local img_format="raw"
+        if [[ "$USE_QCOW2" == true ]]; then
+            img_format="qcow2"
+        fi
+
+        if [[ "$img_format" == "qcow2" ]]; then
+            if ! qemu-img create -f qcow2 "$vm_img" "${vm_size}"; then
+                messages+=("Failed to create VM disk image")
+                print_message "Create VM Disk" "${messages[@]}"
+                return 1
+            fi
+        else
+            if ! qemu-img create -f raw -o size="${vm_size}" "$vm_img"; then
+                messages+=("Failed to create VM disk image")
+                print_message "Create VM Disk" "${messages[@]}"
+                return 1
+            fi
         fi
         messages+=("VM disk image created successfully")
     fi
@@ -691,12 +713,20 @@ run_post_boot_provisioning() {
     # Build command with optional proxy parameter
     local vm_password_b64
     vm_password_b64=$(printf '%s' "$VM_PASSWORD" | base64 | tr -d '\n')
-    local install_cmd="cd /tmp/$toolkit_name && printf '%s' '$vm_password_b64' | base64 -d | sudo -S -p '' bash installer/install-host.sh virtualization --automated"
-    local display_cmd="cd /tmp/$toolkit_name && sudo bash installer/install-host.sh virtualization --automated"
+    local install_mode="virtualization"
+    if [[ "$USE_DKMS" == true ]]; then
+        install_mode="virtualization-dkms"
+    fi
+    local install_cmd="cd /tmp/$toolkit_name && printf '%s' '$vm_password_b64' | base64 -d | sudo -S -p '' bash installer/install-host.sh $install_mode --automated"
+    local display_cmd="cd /tmp/$toolkit_name && sudo bash installer/install-host.sh $install_mode --automated"
     if [[ -n "$PROXY_URL" ]]; then
         install_cmd="${install_cmd} --proxy $PROXY_URL"
         display_cmd="${display_cmd} --proxy $PROXY_URL"
         print_info "  Proxy: $PROXY_URL"
+    fi
+    if [[ "$USE_INTERNAL" == true ]]; then
+        install_cmd="${install_cmd} --internal"
+        display_cmd="${display_cmd} --internal"
     fi
     print_info "  Command: $display_cmd"
     echo
@@ -805,6 +835,9 @@ boot_vm() {
 
     vfio_host=$(get_vfio_pci_host 2>/dev/null || true)
 
+    # Serial console log: one file per boot phase, written to the same dir as the script log
+    local serial_log="${LOG_DIR}/sriov_serial_${boot_phase}_${RUN_TIMESTAMP}.log"
+
     local messages=()
     messages+=("Booting VM with QEMU...")
     if [[ -n "$iso_file" ]]; then
@@ -816,6 +849,7 @@ boot_vm() {
     messages+=("Memory: ${vm_memory} MB")
     messages+=("Display Mode: gtk")
     messages+=("Boot Mode: ${boot_phase}")
+    messages+=("Serial log: ${serial_log}")
     if [[ -n "$vfio_host" ]]; then
         messages+=("VFIO Host: ${vfio_host}")
     fi
@@ -835,7 +869,7 @@ boot_vm() {
 
     # Build QEMU command
     local qemu_cmd=(
-        "sudo" "qemu-system-x86_64"
+        "sudo" "-E" "qemu-system-x86_64"
         "-m" "$vm_memory"
         "-cpu" "host,host-phys-bits=on,host-phys-bits-limit=39"
         "-enable-kvm"
@@ -849,14 +883,28 @@ boot_vm() {
     fi
 
     # Add drives and network
+    local disk_fmt
+    if [[ "$USE_QCOW2" == true ]]; then
+        disk_fmt="qcow2"
+    else
+        disk_fmt="raw"
+    fi
+
     qemu_cmd+=(
-        "-drive" "file=${vm_img},format=raw,cache=none,if=virtio"
+        "-drive" "file=${vm_img},format=${disk_fmt},cache=none,if=virtio"
         "-net" "nic,netdev=net0"
         "-netdev" "user,id=net0,hostfwd=tcp::3333-:22"
         "-device" "virtio-vga"
-        "-object" "memory-backend-memfd,hugetlb=on,id=mem1,size=${vm_memory}M"
-        "-machine" "memory-backend=mem1"
     )
+
+    # Use hugepages memory backend only in raw/QEMU mode.
+    # In qcow2/libvirt mode, libvirt manages hugepages at runtime via the qemu hook.
+    if [[ "$USE_QCOW2" != true ]]; then
+        qemu_cmd+=(
+            "-object" "memory-backend-memfd,hugetlb=on,id=mem1,size=${vm_memory}M"
+            "-machine" "memory-backend=mem1"
+        )
+    fi
 
     if [[ -n "$vfio_host" ]]; then
         qemu_cmd+=("-device" "vfio-pci,host=${vfio_host}")
@@ -897,8 +945,8 @@ boot_vm() {
     fi
 
     # GTK-only display mode
-    export DISPLAY=:0
     qemu_cmd+=("-display" "gtk")
+    qemu_cmd+=("-serial" "file:${serial_log}")
 
     # Print QEMU command for debugging
     print_info "Executing QEMU command:"
@@ -907,8 +955,8 @@ boot_vm() {
 
     # Execute QEMU
     if [[ "$run_background" == true ]]; then
-        # Run in background
-        "${qemu_cmd[@]}" > /dev/null 2>&1 &
+        # Run in background; redirect QEMU stderr to script log so errors are not silently lost
+        "${qemu_cmd[@]}" >> "$LOG_FILE" 2>&1 &
         local qemu_pid=$!
 
         echo
@@ -919,6 +967,10 @@ boot_vm() {
         echo -e "  ${BOLD}Password:${NC} (as specified with --vm-password)"
         echo
         echo -e "  ${BOLD}Display:${NC} GTK window should be visible"
+        echo
+        echo -e "${BLUE}Logs:${NC}"
+        echo -e "  ${BOLD}Serial console:${NC} $serial_log"
+        echo -e "  ${BOLD}Script log:${NC}    $LOG_FILE"
         echo
         echo -e "${BLUE}To stop the VM:${NC}"
         echo -e "  sudo kill $qemu_pid"
@@ -932,6 +984,8 @@ boot_vm() {
             return 0
         else
             print_error "QEMU VM failed with exit code $?"
+            print_info "Serial console log: $serial_log"
+            print_info "Script log:         $LOG_FILE"
             return 1
         fi
     fi
@@ -1171,6 +1225,18 @@ parse_arguments() {
                 REBOOT_VM=true
                 shift
                 ;;
+            --qcow2)
+                USE_QCOW2=true
+                shift
+                ;;
+            --dkms)
+                USE_DKMS=true
+                shift
+                ;;
+            --internal)
+                USE_INTERNAL=true
+                shift
+                ;;
             --proxy)
                 PROXY_URL="$2"
                 shift 2
@@ -1296,7 +1362,11 @@ main() {
         vm_dir="$(dirname "$VM_IMAGE")"
     else
         vm_dir="${DOWNLOAD_DIR:-$DEFAULT_DOWNLOAD_DIR}"
-        vm_img="${vm_dir}/${VM_NAME}.img"
+        if [[ "$USE_QCOW2" == true ]]; then
+            vm_img="${vm_dir}/${VM_NAME}.qcow2"
+        else
+            vm_img="${vm_dir}/${VM_NAME}.img"
+        fi
     fi
 
     if [[ ! -d "$vm_dir" ]]; then
@@ -1355,8 +1425,11 @@ main() {
     # Create VM disk
     create_vm_disk "$vm_img" "$VM_SIZE" || exit 1
 
-    # Configure hugepages for VM memory
-    set_hugepages "$VM_MEMORY" || exit 1
+    # Configure hugepages for VM memory (raw/QEMU mode only).
+    # In qcow2/libvirt mode, libvirt manages hugepages via the qemu hook at runtime.
+    if [[ "$USE_QCOW2" != true ]]; then
+        set_hugepages "$VM_MEMORY" || exit 1
+    fi
 
     # Boot VM with kernel/initrd for autoinstall (or fallback to CDROM)
     boot_vm "$boot_iso" "$vm_img" "$VM_MEMORY" "$OVMF_CODE" "$OVMF_VARS" "$kernel_file" "$initrd_file" "$seed_iso" "installer" || exit 1
@@ -1425,3 +1498,4 @@ if [[ -n "$OUTPUT_VM_IMAGE" ]]; then
 fi
 echo "[INFO] To launch the VM, run launch-vm.sh with the config file, for example:"
 echo "[INFO] sudo $LAUNCH_VM_SCRIPT_PATH -d 3 -c config/vm-config/bmg-idv-config.xml"
+

@@ -40,6 +40,8 @@ PCI_DEVICE=""
 PCI_SYSFS=""
 DRI_CARD=""
 GT_PATH=""
+GPU_DRIVER=""  # Detected driver: "xe" or "i915"
+RESOURCE_SUBPATH=""  # Extra subdir for resource files: "" for xe, "gt0" for i915
 
 ################################################################################
 # OUTPUT FUNCTIONS
@@ -81,7 +83,7 @@ find_dri_card() {
     local pci_dev=$1
     local pci_real
     pci_real=$(readlink -f "/sys/bus/pci/devices/${pci_dev}" 2>/dev/null)
-    
+
     for card_path in /sys/class/drm/card*; do
         if [ -L "${card_path}/device" ]; then
             local card_dev
@@ -98,37 +100,49 @@ find_dri_card() {
 # Auto-detect GT path with common variations
 detect_gt_path() {
     local dri_card=$1
-    local base_path="${GPU_BASE_PATH}/${dri_card}"
-    
-    # Try common GT path variations
-    local gt_variations=("$GT_NAME" "gt0" "gt" "tile0/gt0" "tile0/gt")
-    
-    for gt_var in "${gt_variations[@]}"; do
-        if [ -d "${base_path}/${gt_var}" ]; then
-            echo "${base_path}/${gt_var}"
+
+    if [ "$GPU_DRIVER" = "xe" ]; then
+        # xe: PF/VF paths are under debugfs
+        local base_path="${GPU_BASE_PATH}/${dri_card}"
+        local gt_variations=("$GT_NAME" "gt0" "gt" "tile0/gt0" "tile0/gt")
+
+        for gt_var in "${gt_variations[@]}"; do
+            if [ -d "${base_path}/${gt_var}" ]; then
+                echo "${base_path}/${gt_var}"
+                return 0
+            fi
+        done
+
+        # Not found, return default and let validation handle it
+        echo "${base_path}/${GT_NAME}"
+        return 1
+    else
+        # i915 (fallback): PF/VF paths are under sysfs prelim_iov
+        local iov_path="${PCI_SYSFS}/drm/card${dri_card}/prelim_iov"
+        if [ -d "$iov_path" ]; then
+            echo "$iov_path"
             return 0
         fi
-    done
-    
-    # If nothing found, return default
-    echo "${base_path}/${GT_NAME}"
-    return 1
+        # Not found, return expected path and let validation handle it
+        echo "$iov_path"
+        return 1
+    fi
 }
 
 # Auto-detect PF path with common variations
 detect_pf_path() {
     local gt_path=$1
-    
+
     # Try common PF path variations
     local pf_variations=("$PF_SUBPATH" "pf" "iov/pf" "sriov/pf")
-    
+
     for pf_var in "${pf_variations[@]}"; do
         if [ -d "${gt_path}/${pf_var}" ]; then
             echo "${pf_var}"
             return 0
         fi
     done
-    
+
     echo "$PF_SUBPATH"
     return 1
 }
@@ -136,10 +150,10 @@ detect_pf_path() {
 # Auto-detect VF path with common variations
 detect_vf_path() {
     local gt_path=$1
-    
+
     # Try common VF path variations (check for vf1 as indicator)
     local vf_variations=("${VF_SUBPATH}1" "vf1" "iov/vf1" "sriov/vf1")
-    
+
     for vf_var in "${vf_variations[@]}"; do
         if [ -d "${gt_path}/${vf_var}" ]; then
             # Extract the base path (remove the '1')
@@ -147,9 +161,36 @@ detect_vf_path() {
             return 0
         fi
     done
-    
+
     echo "$VF_SUBPATH"
     return 1
+}
+
+# Detect whether the GPU is using the xe or i915 driver
+detect_gpu_driver() {
+    local pci_dev=$1
+    local driver_link="/sys/bus/pci/devices/${pci_dev}/driver"
+
+    if [ -L "$driver_link" ]; then
+        local driver_name
+        driver_name=$(basename "$(readlink -f "$driver_link")")
+        case "$driver_name" in
+            xe)
+                GPU_DRIVER="xe"
+                ;;
+            i915)
+                GPU_DRIVER="i915"
+                ;;
+            *)
+                print_error "Unsupported GPU driver: ${driver_name} (expected xe or i915)"
+                exit 1
+                ;;
+        esac
+    else
+        print_error "No driver bound to GPU device ${pci_dev}"
+        print_info "Ensure xe or i915 driver is loaded"
+        exit 1
+    fi
 }
 
 # Auto-detect Intel GPU device
@@ -165,22 +206,27 @@ detect_intel_gpu() {
         class=$(cat "${device}/class" 2>/dev/null)
         [[ "$class" == 0x03* ]] && gpu_devices+=("$(basename "$device")")
     done
-    
+
     [ ${#gpu_devices[@]} -eq 0 ] && { echo -e "${RED}Error: No Intel GPU device found${NC}"; exit 1; }
-    
+
     PCI_DEVICE="${gpu_devices[0]}"
-    
+    PCI_SYSFS="/sys/bus/pci/devices/${PCI_DEVICE}"
+
     DRI_CARD=$(find_dri_card "$PCI_DEVICE")
     if [ -z "$DRI_CARD" ]; then
         echo -e "${RED}Error: Could not find DRI card for ${PCI_DEVICE}${NC}"
         exit 1
     fi
-    
-    PCI_SYSFS="/sys/bus/pci/devices/${PCI_DEVICE}"
-    
+
+    # Detect driver type
+    detect_gpu_driver "$PCI_DEVICE"
+
+    # i915 has resource files nested under gt0/ inside each pf/vf dir
+    [ "$GPU_DRIVER" = "i915" ] && RESOURCE_SUBPATH="gt0"
+
     # Auto-detect GT path
     GT_PATH=$(detect_gt_path "$DRI_CARD")
-    
+
     # Auto-detect PF and VF paths
     PF_SUBPATH=$(detect_pf_path "$GT_PATH")
     VF_SUBPATH=$(detect_vf_path "$GT_PATH")
@@ -199,8 +245,9 @@ check_root() {
     fi
 }
 
-# Check if debugfs is mounted
+# Check if debugfs is mounted (xe only)
 check_debugfs() {
+    [ "$GPU_DRIVER" != "xe" ] && return 0
     if [ ! -d "/sys/kernel/debug" ]; then
         print_error "debugfs not mounted"
         print_info "Mount it with: sudo mount -t debugfs none /sys/kernel/debug"
@@ -210,18 +257,26 @@ check_debugfs() {
 
 # Validate GPU device and paths
 check_gpu_device() {
-    if [ ! -d "${GPU_BASE_PATH}/${DRI_CARD}" ]; then
-        print_error "GPU DRI card ${DRI_CARD} not found"
-        echo "Available devices:"
-        ls -1 ${GPU_BASE_PATH}/ 2>/dev/null || echo "  None found"
-        exit 1
+    if [ "$GPU_DRIVER" = "i915" ]; then
+        if [ ! -d "${GT_PATH}" ]; then
+            print_error "i915 IOV path not found: ${GT_PATH}"
+            print_info "Ensure i915 driver is loaded with SR-IOV (prelim_iov) support"
+            exit 1
+        fi
+    else
+        if [ ! -d "${GPU_BASE_PATH}/${DRI_CARD}" ]; then
+            print_error "GPU DRI card ${DRI_CARD} not found"
+            echo "Available devices:"
+            ls -1 ${GPU_BASE_PATH}/ 2>/dev/null || echo "  None found"
+            exit 1
+        fi
+
+        if [ ! -d "${GT_PATH}" ]; then
+            print_error "GT path ${GT_PATH} not found"
+            exit 1
+        fi
     fi
-    
-    if [ ! -d "${GT_PATH}" ]; then
-        print_error "GT path ${GT_PATH} not found"
-        exit 1
-    fi
-    
+
     if [ ! -f "${PCI_SYSFS}/sriov_totalvfs" ]; then
         print_error "SR-IOV not supported on device ${PCI_DEVICE}"
         exit 1
@@ -246,24 +301,25 @@ check_sriov_enabled() {
 
 # Read and display PF resources
 read_pf_resources() {
-    local pf_dir="${GT_PATH}/${PF_SUBPATH}"
-    
+    local pf_dir="${GT_PATH}/${PF_SUBPATH}${RESOURCE_SUBPATH:+/${RESOURCE_SUBPATH}}"
+
     if [ ! -d "$pf_dir" ]; then
-        print_info "PF resources not available"
+        print_info "PF resources not available (${pf_dir})"
         return 0
     fi
-    
+
     # GGTT information
     if [ -f "${pf_dir}/ggtt_available" ]; then
+        # xe: ggtt_available contains total/avail/spare
         local ggtt_info
         local ggtt_total
         local ggtt_avail
         local ggtt_spare
-        ggtt_info=$(cat "${pf_dir}/ggtt_available" 2>/dev/null)
+        ggtt_info=$(cat "${pf_dir}/ggtt_available" 2>/dev/null || true)
         ggtt_total=$(echo "$ggtt_info" | grep "^total:" | awk '{print $2}')
         ggtt_avail=$(echo "$ggtt_info" | grep "^avail:" | awk '{print $2}')
         ggtt_spare=$(echo "$ggtt_info" | grep "^spare:" | awk '{print $2}')
-        
+
         if [ -n "$ggtt_total" ]; then
             local total_mib=$((ggtt_total / 1024 / 1024))
             echo -e "  ${GREEN}GGTT Total:${NC}     ${YELLOW}${total_mib} MiB${NC} (${ggtt_total} bytes)"
@@ -277,27 +333,35 @@ read_pf_resources() {
             echo -e "  ${GREEN}GGTT Spare:${NC}     ${YELLOW}${spare_mib} MiB${NC} (${ggtt_spare} bytes)"
         fi
         echo ""
+    else
+        # i915: ggtt_spare is a standalone file
+        local ggtt_spare
+        ggtt_spare=$(cat "${pf_dir}/ggtt_spare" 2>/dev/null || true)
+        if [ -n "$ggtt_spare" ]; then
+            local spare_mib=$((ggtt_spare / 1024 / 1024))
+            echo -e "  ${GREEN}GGTT Spare:${NC}          ${YELLOW}${spare_mib} MiB${NC} (${ggtt_spare} bytes)"
+        fi
     fi
-    
+
     # LMEM spare (if available)
     local lmem_spare
-    lmem_spare=$(cat "${pf_dir}/lmem_spare" 2>/dev/null)
-    if [ -n "$lmem_spare" ]; then
+    lmem_spare=$(cat "${pf_dir}/lmem_spare" 2>/dev/null || true)
+    if [ -n "$lmem_spare" ] && [ "$lmem_spare" != "0" ]; then
         local lmem_spare_mib=$((lmem_spare / 1024 / 1024))
         echo -e "  ${GREEN}LMEM Spare:${NC}         ${YELLOW}${lmem_spare_mib} MiB${NC} (${lmem_spare} bytes)"
         echo ""
     fi
-    
+
     # Other PF resources
     local ctx_spare
     local db_spare
     local exec_q
     local preempt
-    ctx_spare=$(cat "${pf_dir}/contexts_spare" 2>/dev/null)
-    db_spare=$(cat "${pf_dir}/doorbells_spare" 2>/dev/null)
-    exec_q=$(cat "${pf_dir}/exec_quantum_ms" 2>/dev/null)
-    preempt=$(cat "${pf_dir}/preempt_timeout_us" 2>/dev/null)
-    
+    ctx_spare=$(cat "${pf_dir}/contexts_spare" 2>/dev/null || true)
+    db_spare=$(cat "${pf_dir}/doorbells_spare" 2>/dev/null || true)
+    exec_q=$(cat "${pf_dir}/exec_quantum_ms" 2>/dev/null || true)
+    preempt=$(cat "${pf_dir}/preempt_timeout_us" 2>/dev/null || true)
+
     echo -e "  ${GREEN}Contexts Spare:${NC}      ${YELLOW}${ctx_spare:-N/A}${NC}"
     echo -e "  ${GREEN}Doorbells Spare:${NC}     ${YELLOW}${db_spare:-N/A}${NC}"
     echo -e "  ${GREEN}Exec Quantum:${NC}        ${YELLOW}${exec_q:-0} ms${NC}"
@@ -307,15 +371,15 @@ read_pf_resources() {
 # Read and display single VF resources
 read_vf_resources() {
     local vf_num=$1
-    local vf_dir="${GT_PATH}/${VF_SUBPATH}${vf_num}"
-    
+    local vf_dir="${GT_PATH}/${VF_SUBPATH}${vf_num}${RESOURCE_SUBPATH:+/${RESOURCE_SUBPATH}}"
+
     if [ ! -d "$vf_dir" ]; then
-        print_error "VF${vf_num} path not found"
+        print_error "VF${vf_num} path not found: ${vf_dir}"
         return 1
     fi
-    
+
     echo -e "${BLUE}┌─ VF${vf_num} ─────────────────────────────${NC}"
-    
+
     # GGTT quota
     local ggtt_quota
     ggtt_quota=$(cat "${vf_dir}/ggtt_quota" 2>/dev/null || echo "0")
@@ -325,37 +389,37 @@ read_vf_resources() {
     else
         echo -e "${BLUE}│${NC}  ${GREEN}GGTT Quota:${NC}          ${YELLOW}0 MiB${NC}"
     fi
-    
+
     # LMEM quota (if available)
     local lmem_quota
-    lmem_quota=$(cat "${vf_dir}/lmem_quota" 2>/dev/null)
-    if [ -n "$lmem_quota" ]; then
+    lmem_quota=$(cat "${vf_dir}/lmem_quota" 2>/dev/null || true)
+    if [ -n "$lmem_quota" ] && [ "$lmem_quota" != "0" ]; then
         local lmem_mib=$((lmem_quota / 1024 / 1024))
         echo -e "${BLUE}│${NC}  ${GREEN}LMEM Quota:${NC}          ${YELLOW}${lmem_mib} MiB${NC} (${lmem_quota} bytes)"
     fi
-    
+
     # Other quotas
     local ctx_quota
     local db_quota
     local exec_q
     local preempt
-    ctx_quota=$(cat "${vf_dir}/contexts_quota" 2>/dev/null)
-    db_quota=$(cat "${vf_dir}/doorbells_quota" 2>/dev/null)
-    exec_q=$(cat "${vf_dir}/exec_quantum_ms" 2>/dev/null)
-    preempt=$(cat "${vf_dir}/preempt_timeout_us" 2>/dev/null)
-    
+    ctx_quota=$(cat "${vf_dir}/contexts_quota" 2>/dev/null || true)
+    db_quota=$(cat "${vf_dir}/doorbells_quota" 2>/dev/null || true)
+    exec_q=$(cat "${vf_dir}/exec_quantum_ms" 2>/dev/null || true)
+    preempt=$(cat "${vf_dir}/preempt_timeout_us" 2>/dev/null || true)
+
     echo -e "${BLUE}│${NC}  ${GREEN}Contexts Quota:${NC}      ${YELLOW}${ctx_quota:-N/A}${NC}"
     echo -e "${BLUE}│${NC}  ${GREEN}Doorbells Quota:${NC}     ${YELLOW}${db_quota:-N/A}${NC}"
     echo -e "${BLUE}│${NC}  ${GREEN}Exec Quantum:${NC}        ${YELLOW}${exec_q:-0} ms${NC}"
     echo -e "${BLUE}│${NC}  ${GREEN}Preemption Timeout:${NC}  ${YELLOW}${preempt:-0} us${NC}"
-    
+
     # Scheduler priority (if available)
     local sched_prio
-    sched_prio=$(cat "${vf_dir}/sched_priority" 2>/dev/null)
+    sched_prio=$(cat "${vf_dir}/sched_priority" 2>/dev/null || true)
     if [ -n "$sched_prio" ]; then
         echo -e "${BLUE}│${NC}  ${GREEN}Scheduler Priority:${NC}  ${YELLOW}${sched_prio}${NC}"
     fi
-    
+
     echo -e "${BLUE}└────────────────────────────────────${NC}"
     echo ""
 }
@@ -378,7 +442,8 @@ print_header
 echo -e "${GREEN}Device Information:${NC}"
 echo -e "  PCI Device:  ${YELLOW}${PCI_DEVICE}${NC}"
 echo -e "  DRI Card:    ${YELLOW}card${DRI_CARD}${NC}"
-echo -e "  GT Path:     ${YELLOW}${GT_PATH}${NC}"
+echo -e "  Driver:      ${YELLOW}${GPU_DRIVER}${NC}"
+echo -e "  IOV Path:    ${YELLOW}${GT_PATH}${NC}"
 echo ""
 
 # SR-IOV status
@@ -404,3 +469,4 @@ done
 
 echo -e "${BLUE}========================================${NC}"
 print_success "Resource information retrieved successfully"
+

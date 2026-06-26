@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Intel Corporation
 # All rights reserved.
-
+# Version: 1.2
+#
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -121,6 +122,11 @@ normalize_on_off() {
     esac
 }
 
+get_qemu_major_version() {
+    qemu-system-x86_64 --version 2>/dev/null \
+        | awk '/^QEMU emulator version/ { match($4, /^([0-9]+)/, m); print m[1]; exit }'
+}
+
 get_display_connector_count() {
     local mode="$1"
     local xml_file="$2"
@@ -207,11 +213,11 @@ get_gpu_vf_device() {
     # Pattern: 45:00.0, 45:00.1, ..., 45:03.0
     # Assume vm_id is an integer index into the list of available devices
     local vm_id="$1"
-    # Get all matching VGA devices from lspci output
-    mapfile -t vga_devices < <(lspci | grep -i 'vga' | grep -i intel | awk '{print $1}')
+    # Get all matching VGA devices from lspci output (with domain prefix)
+    mapfile -t vga_devices < <(lspci -D | grep -i 'vga' | grep -i intel | awk '{print $1}')
     # Return the device corresponding to vm_id index
     if [[ $vm_id -ge 0 && $vm_id -lt ${#vga_devices[@]} ]]; then
-        echo "0000:${vga_devices[$vm_id]}"
+        echo "${vga_devices[$vm_id]}"
     else
         echo ""
     fi
@@ -336,6 +342,80 @@ destroy_hugepages() {
     fi
 }
 
+# Pin vCPU threads to individual CPUs from the assigned range
+pin_vcpu_threads() {
+    local qemu_pid="$1"
+    local cpu_assignment="$2"
+    local cpu_cores="$3"
+    local vm_id="$4"
+
+    if [[ -z "$cpu_assignment" ]]; then
+        return 0
+    fi
+
+    # Convert CPU range to individual CPU list (e.g., "4-7" -> [4, 5, 6, 7])
+    local cpu_array=()
+    local i
+    for range in $(echo "$cpu_assignment" | tr ',' ' '); do
+        if [[ "$range" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            local start="${BASH_REMATCH[1]}"
+            local end="${BASH_REMATCH[2]}"
+            for ((i=start; i<=end; i++)); do
+                cpu_array+=("$i")
+            done
+        elif [[ "$range" =~ ^[0-9]+$ ]]; then
+            cpu_array+=("$range")
+        fi
+    done
+
+    if [[ ${#cpu_array[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    # Wait a moment for QEMU threads to be created
+    sleep 1
+
+    # Find vCPU threads by looking for KVM threads associated with this process
+    local vcpu_count=0
+    local tid
+    local cpu_idx=0
+
+    # Get TIDs of threads in the QEMU process
+    local task_dir="/proc/$qemu_pid/task"
+    if [[ ! -d "$task_dir" ]]; then
+        echo -e "${YELLOW}Warning: Could not access task directory for PID $qemu_pid${NC}"
+        return 0
+    fi
+
+    # Pin CPUs for KVM vCPU threads (typically named KVM vcpu:*)
+    for tid_dir in "$task_dir"/*; do
+        if [[ -d "$tid_dir" ]]; then
+            tid=$(basename "$tid_dir")
+            # Try to pin each thread to one of the assigned CPUs
+            # Distribute threads across assigned CPUs
+            local assigned_cpu="${cpu_array[$((cpu_idx % ${#cpu_array[@]}))]}"
+
+            # Check if this thread name suggests it's a vCPU thread
+            local comm_file="$tid_dir/comm"
+            if [[ -f "$comm_file" ]]; then
+                local thread_name
+                thread_name=$(<"$comm_file")
+                # Pin vCPU and IO threads
+                if [[ "$thread_name" =~ ^(qemu-system|CPU|IO|kvm).*$ ]]; then
+                    if taskset -p -c "$assigned_cpu" "$tid" >/dev/null 2>&1; then
+                        ((vcpu_count++))
+                        ((cpu_idx++))
+                    fi
+                fi
+            fi
+        fi
+    done
+
+    if [[ $vcpu_count -gt 0 ]]; then
+        echo -e "${GREEN}Pinned $vcpu_count threads for VM $vm_id to CPUs: $cpu_assignment${NC}"
+    fi
+}
+
 main() {
     # Default values
     vm_id=""
@@ -406,6 +486,9 @@ main() {
     echo -e "${BLUE}Total memory for selected VMs: ${total_memory_mb} MB${NC}"
     set_hugepages "$total_memory_mb" || exit 1
 
+    local qemu_major_version
+    qemu_major_version=$(get_qemu_major_version)
+
     for id in "${selected_vm_ids[@]}"; do
 
         # Extract VM details
@@ -420,6 +503,9 @@ main() {
         vm_pid=$(get_vm_value "vm_pid" "$id" "$xml_file")
         os_type=$(get_vm_value "os_type" "$id" "$xml_file")
         description=$(get_vm_value "description" "$id" "$xml_file")
+        cpu_assignment=$(get_vm_value "cpu_assignment" "$id" "$xml_file")
+        usb_mouse_hostbus=$(get_vm_value "usb_mouse_hostbus" "$id" "$xml_file")
+        usb_mouse_hostport=$(get_vm_value "usb_mouse_hostport" "$id" "$xml_file")
 
         # Only launch when all required fields are present
         if [[ -n "$name" && -n "$memory_size" && -n "$cpu_cores" && -n "$cpu_threads" && -n "$mac_address" && -n "$disk_path" && -n "$vm_pid" ]]; then
@@ -437,25 +523,43 @@ main() {
             fi
 
             # CPU configuration
-            cpu_args=(-cpu "host,host-phys-bits=on,host-phys-bits-limit=39")
-            # For perf optimzation on windows
-            #cpu_args=(-cpu "host,hv_relaxed,hv-vapic,hv-spinlocks=4096,hv-time,hv-runtime,hv-synic,hv-stimer,hv_vpindex,hv-tlbflush,hv-ipi,kvm=off")
+            if [[ "${os_type,,}" == "ubuntu" ]]; then
+                cpu_args=(-cpu "host,host-phys-bits=on,host-phys-bits-limit=39")
+            else
+                cpu_args=(-cpu "host,hv_relaxed,hv-vapic,hv-spinlocks=4096,hv-time,hv-runtime,hv-synic,hv-stimer,hv_vpindex,hv-tlbflush,hv-ipi,kvm=off")
+            fi
 
             # Bootloader configuration (OVMF for UEFI boot)
             guest_hint="${name,,} ${disk_path,,} ${description,,}"
+            local disk_base="${disk_path%.*}"
             if [[ "${os_type,,}" == "ubuntu" || ( -z "$os_type" && "$guest_hint" == *"ubuntu"* ) ]]; then
+                local ovmf_fd="${disk_base}_OVMF.fd"
+                if [[ ! -f "$ovmf_fd" ]]; then
+                    echo -e "${BLUE}Creating per-VM OVMF: ${ovmf_fd}${NC}"
+                    cp "/usr/share/qemu/OVMF.fd" "$ovmf_fd" || { echo -e "${RED}Error: failed to copy OVMF.fd for VM ID $id${NC}"; exit 1; }
+                fi
                 ovmf_args=(
-                    -drive file="/usr/share/qemu/OVMF.fd,format=raw,if=pflash"
+                    -drive file="${ovmf_fd},format=raw,if=pflash"
                 )
                 disk_format="raw"
             else
+                local ovmf_code="${disk_base}_OVMF_CODE_4M.fd"
+                local ovmf_vars="${disk_base}_OVMF_VARS_4M.fd"
+                if [[ ! -f "$ovmf_code" ]]; then
+                    echo -e "${BLUE}Creating per-VM OVMF CODE: ${ovmf_code}${NC}"
+                    cp "/usr/share/OVMF/OVMF_CODE_4M.fd" "$ovmf_code" || { echo -e "${RED}Error: failed to copy OVMF_CODE_4M.fd for VM ID $id${NC}"; exit 1; }
+                fi
+                if [[ ! -f "$ovmf_vars" ]]; then
+                    echo -e "${BLUE}Creating per-VM OVMF VARS: ${ovmf_vars}${NC}"
+                    cp "/usr/share/OVMF/OVMF_VARS_4M.fd" "$ovmf_vars" || { echo -e "${RED}Error: failed to copy OVMF_VARS_4M.fd for VM ID $id${NC}"; exit 1; }
+                fi
                 ovmf_args=(
-                    -drive file="/usr/share/OVMF/OVMF_CODE_4M.fd,format=raw,if=pflash,unit=0,readonly=on"
-                    -drive file="/usr/share/OVMF/OVMF_VARS_4M.fd,format=raw,if=pflash,unit=1"
+                    -drive file="${ovmf_code},format=raw,if=pflash,unit=0,readonly=on"
+                    -drive file="${ovmf_vars},format=raw,if=pflash,unit=1"
                 )
                 disk_format="qcow2"
             fi
-            
+
             # Memory configuration
             mem_args=(
                 -object "memory-backend-memfd,id=mem${id},hugetlb=on,size=${memory_size}M"
@@ -470,11 +574,32 @@ main() {
                 -chardev "socket,path=${qga_sock},server=on,wait=off,id=${qga_id}"
                 -device "virtserialport,chardev=${qga_id},name=org.qemu.guest_agent.0"
             )
-            
+
             # Optional QEMU monitor (telnet) configuration per VM from XML
             monitor_args=()
             if [[ "$monitor_port" =~ ^[0-9]+$ ]]; then
                 monitor_args=(-monitor "telnet:localhost:${monitor_port},server,nowait")
+            fi
+
+            # Optional USB mouse passthrough per VM by host bus/port from lsusb -t.
+            usb_args=()
+            if [[ -n "$usb_mouse_hostbus" || -n "$usb_mouse_hostport" ]]; then
+                if [[ -z "$usb_mouse_hostbus" || -z "$usb_mouse_hostport" ]]; then
+                    echo -e "${RED}Error: vm id=${id} requires both usb_mouse_hostbus and usb_mouse_hostport.${NC}"
+                    exit 1
+                fi
+
+                if [[ ! "$usb_mouse_hostbus" =~ ^[0-9]{1,3}$ ]]; then
+                    echo -e "${RED}Error: vm id=${id} has invalid usb_mouse_hostbus '${usb_mouse_hostbus}'.${NC}"
+                    exit 1
+                fi
+
+                if [[ ! "$usb_mouse_hostport" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+                    echo -e "${RED}Error: vm id=${id} has invalid usb_mouse_hostport '${usb_mouse_hostport}'.${NC}"
+                    exit 1
+                fi
+
+                usb_args=(-device "usb-host,bus=xhci.0,hostbus=$((10#${usb_mouse_hostbus})),hostport=${usb_mouse_hostport}")
             fi
 
             # Display configuration
@@ -488,10 +613,16 @@ main() {
             local xml_input
             local xml_render_sync
             local connectors_arg
+            local display_mode
+            local display_mode_normalized
+            local primary_ip
+            local spice_port
+            local host_primary_ip
             local fullscreen_flag
             local show_fps_flag
             local hw_cursor_flag
             local input_flag
+            spice_args=()
 
             xml_fullscreen=$(get_vm_display_value "fullscreen" "$id" "$xml_file")
             xml_show_fps=$(get_vm_display_value "show_fps" "$id" "$xml_file")
@@ -500,7 +631,13 @@ main() {
             xml_hw_cursor=$(get_vm_display_value "hw_cursor" "$id" "$xml_file")
             xml_input=$(get_vm_display_value "input" "$id" "$xml_file")
             xml_render_sync=$(get_vm_display_value "render_sync" "$id" "$xml_file")
+            display_mode=$(get_vm_display_value "display_mode" "$id" "$xml_file")
+            spice_port=$(get_vm_display_value "spice_port" "$id" "$xml_file")
             connectors_arg=$(build_vm_connector_arg "$id" "$xml_file")
+
+            if [[ -z "$display_mode" ]]; then
+                display_mode=$(xmllint --xpath "string(//display_configurations/mode[1]/@name)" "$xml_file" 2>/dev/null || true)
+            fi
 
             if [[ "$connectors_arg" == INVALID_CONNECTOR_INDEX:* ]]; then
                 echo -e "${RED}Error: vm id=${id} has invalid connector index '${connectors_arg#INVALID_CONNECTOR_INDEX:}'.${NC}"
@@ -520,16 +657,72 @@ main() {
             xml_input=$(normalize_on_off "$xml_input" "on")
             [[ -z "$xml_max_outputs" || ! "$xml_max_outputs" =~ ^[0-9]+$ || "$xml_max_outputs" -lt 1 ]] && xml_max_outputs="1"
 
+            # USB tablet input: always for Ubuntu; for others only on single-monitor (max_outputs <= 1)
+            usb_tablet_args=()
+            if [[ "${os_type,,}" == "ubuntu" || "$xml_max_outputs" -le 1 ]]; then
+                usb_tablet_args=(-device "usb-tablet,id=input0")
+            fi
+
             fullscreen_flag=$(bool_to_on_off "$xml_fullscreen")
             show_fps_flag=$(bool_to_on_off "$xml_show_fps")
             hw_cursor_flag="$xml_hw_cursor"
             input_flag="$xml_input"
+            display_mode_normalized="${display_mode,,}"
+            [[ -z "$display_mode_normalized" ]] && display_mode_normalized="idv"
 
-            display_args=(-display "gtk,input=${input_flag},gl=on,full-screen=${fullscreen_flag},show-fps=${show_fps_flag},hw-cursor=${hw_cursor_flag}${connectors_arg:+,${connectors_arg}}")
-            virtio_args=(-device "virtio-vga,max_outputs=${xml_max_outputs},blob=${xml_blob},render_sync=${xml_render_sync}")
+            if [[ -z "$primary_ip" ]]; then
+                host_primary_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+                if [[ -n "$host_primary_ip" ]]; then
+                    primary_ip="$host_primary_ip"
+                elif [[ "$net_mode" == "localhost" ]]; then
+                    primary_ip="127.0.0.1"
+                else
+                    primary_ip="0.0.0.0"
+                fi
+            fi
+
+            if [[ -z "$spice_port" ]]; then
+                    spice_port="$((5900 + id))"
+            fi
+
+            case "$display_mode_normalized" in
+                idv)
+                    local idv_display_opts="gtk,input=${input_flag},gl=on,full-screen=${fullscreen_flag},show-fps=${show_fps_flag}"
+                    [[ "${qemu_major_version:-0}" -lt 10 ]] && idv_display_opts+=",hw-cursor=${hw_cursor_flag}"
+                    [[ -n "$connectors_arg" ]] && idv_display_opts+=",${connectors_arg}"
+                    display_args=(-display "$idv_display_opts")
+                    ;;
+                spice)
+                    display_args=(-display "egl-headless")
+                    spice_args=(-spice "addr=${primary_ip},port=${spice_port},disable-ticketing=on")
+                    ;;
+                spice-gtk)
+                    display_args=(-display "none")
+                    spice_args=(-spice "addr=${primary_ip},port=${spice_port},disable-ticketing=on,gl=on,streaming-video=filter,preferred-codec=gstreamer:h264,agent-mouse=on")
+                    ;;
+                *)
+                    echo -e "${RED}Error: vm id=${id} has unsupported display_mode '${display_mode}'. Supported modes: idv, spice, spice-gtk.${NC}"
+                    exit 1
+                    ;;
+            esac
+
+            local virtio_device_opts="virtio-vga,max_outputs=${xml_max_outputs},blob=${xml_blob}"
+            [[ "${qemu_major_version:-0}" -lt 10 ]] && virtio_device_opts+=",render_sync=${xml_render_sync}"
+            virtio_args=(-device "$virtio_device_opts")
+
+            # CPU assignment for taskset (optional)
+            taskset_args=()
+            if [[ -n "$cpu_assignment" ]]; then
+                if [[ ! "$cpu_assignment" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]]; then
+                    echo -e "${RED}Error: invalid cpu_assignment '${cpu_assignment}' for VM ID $id${NC}"
+                    exit 1
+                fi
+                taskset_args=(taskset -c "$cpu_assignment")
+            fi
 
             # QEMU command
             qemu_cmd=(
+                "${taskset_args[@]}"
                 qemu-system-x86_64 -k en-us
                 -nodefaults -enable-kvm
                 -name "$name"
@@ -541,13 +734,14 @@ main() {
                 "${ovmf_args[@]}"
                 -device "qemu-xhci,id=xhci"
                 -rtc base=localtime
-                -device "usb-tablet,id=input0"
-                -global ICH9-LPC.disable_s3=1 -global ICH9-LPC.disable_s4=1
+                "${usb_tablet_args[@]}"
+                "${usb_args[@]}"
                 -drive file="${disk_path},format=${disk_format},cache=none"
                 -device "vfio-pci,host=$(get_gpu_vf_device "$id")"
                 "${net_args[@]}"
                 "${virtio_args[@]}"
                 "${display_args[@]}"
+                "${spice_args[@]}"
                 "${mem_args[@]}"
                 "${monitor_args[@]}"
                 "${qga_args[@]}"
@@ -556,6 +750,12 @@ main() {
             echo -e "${BLUE}QEMU command:${NC}"
             echo "${qemu_cmd[*]} &"
             "${qemu_cmd[@]}" &
+            local qemu_pid=$!
+
+            # Pin vCPU threads to assigned CPUs
+            if [[ -n "$cpu_assignment" ]]; then
+                pin_vcpu_threads "$qemu_pid" "$cpu_assignment" "$cpu_cores" "$id"
+            fi
         else
             echo -e "${YELLOW}Skipping VM ID $id: missing required fields${NC}"
         fi

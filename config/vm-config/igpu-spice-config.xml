@@ -4,8 +4,8 @@
 <!-- All rights reserved. -->
 <vm_configuration>
     <metadata>
-        <version>1.2</version>
-        <description>Virtual Machine Configuration</description>
+        <version>1.4</version>
+        <description>Virtual Machine Configuration (SPICE)</description>
     </metadata>
 
     <virtual_machines>
@@ -15,20 +15,18 @@
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
             <cpu_threads>2</cpu_threads>
+            <!--cpu_assignment>0-3</cpu_assignment-->
+            <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
+            <usb_mouse_hostport>6.2</usb_mouse_hostport-->
             <mac_address>EE:DD:BB:DD:AA:11</mac_address>
             <disk_path>/data/vm-images/win11_1.qcow2</disk_path>
             <ssh_port>1101</ssh_port>
             <monitor_port>1111</monitor_port>
-            <!--<display_configuration>
-                <display_connectors>
-                    <connector index="0">DP-1</connector>
-                    <connector index="1">DP-2</connector>
-                    <connector index="2">HDMI-3</connector>
-                    <connector index="3">DP-3</connector>
-                </display_connectors>
-            </display_configuration>-->
             <vm_pid>vm_pid1</vm_pid>
             <description>Win11 Virtual Machine</description>
+            <display_configuration>
+                <spice_port>5901</spice_port>
+            </display_configuration>
         </vm>
         <vm id="2">
             <name>win2</name>
@@ -36,17 +34,18 @@
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
             <cpu_threads>2</cpu_threads>
+            <!--cpu_assignment>4-7</cpu_assignment-->
+            <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
+            <usb_mouse_hostport>6.4</usb_mouse_hostport-->
             <mac_address>EE:DD:BB:DD:AA:12</mac_address>
             <disk_path>/data/vm-images/win11_2.qcow2</disk_path>
             <ssh_port>1102</ssh_port>
             <monitor_port>1112</monitor_port>
-            <!--<display_configuration>
-                <display_connectors>
-                    <connector index="0">DP-2</connector>
-                </display_connectors>
-            </display_configuration>-->
             <vm_pid>vm_pid2</vm_pid>
             <description>Win11 Virtual Machine</description>
+            <display_configuration>
+                <spice_port>5902</spice_port>
+            </display_configuration>
         </vm>
         <vm id="3">
             <name>ubuntu1</name>
@@ -54,17 +53,18 @@
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
             <cpu_threads>2</cpu_threads>
+            <!--cpu_assignment>8-11</cpu_assignment-->
+            <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
+            <usb_mouse_hostport>6.1</usb_mouse_hostport-->
             <mac_address>EE:DD:BB:DD:AA:13</mac_address>
             <disk_path>/data/vm-images/ubuntu24_1.img</disk_path>
             <ssh_port>1103</ssh_port>
             <monitor_port>1113</monitor_port>
-            <!--<display_configuration>
-                <display_connectors>
-                    <connector index="0">HDMI-3</connector>
-                </display_connectors>
-            </display_configuration>-->
             <vm_pid>vm_pid3</vm_pid>
             <description>Ubuntu 24.04 Virtual Machine</description>
+            <display_configuration>
+                <spice_port>5903</spice_port>
+            </display_configuration>
         </vm>
         <vm id="4">
             <name>ubuntu2</name>
@@ -72,31 +72,30 @@
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
             <cpu_threads>2</cpu_threads>
+            <!--cpu_assignment>12-15</cpu_assignment-->
+            <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
+            <usb_mouse_hostport>6.3</usb_mouse_hostport-->
             <mac_address>EE:DD:BB:DD:AA:14</mac_address>
             <disk_path>/data/vm-images/ubuntu24_2.img</disk_path>
             <ssh_port>1104</ssh_port>
             <monitor_port>1114</monitor_port>
-            <!--<display_configuration>
-                <display_connectors>
-                    <connector index="0">DP-3</connector>
-                </display_connectors>
-            </display_configuration>-->
             <vm_pid>vm_pid4</vm_pid>
             <description>Ubuntu 24.04 Virtual Machine</description>
+            <display_configuration>
+                <spice_port>5904</spice_port>
+            </display_configuration>
         </vm>
     </virtual_machines>
 
     <display_configurations>
-        <mode name="idv">
-            <fullscreen>off</fullscreen>
-            <show_fps>on</show_fps>
+        <mode name="spice">
+        <!--To use hw-spice-->
+        <!--mode name="spice-gtk">-->
+            <display_mode>spice</display_mode>
             <max_outputs>1</max_outputs>
             <blob>true</blob>
             <!-- render_sync: QEMU 9 and below only; ignored on QEMU 10+ -->
             <render_sync>false</render_sync>
-            <!-- hw_cursor: QEMU 9 and below only; ignored on QEMU 10+ -->
-            <hw_cursor>on</hw_cursor>
-            <input>on</input>
         </mode>
     </display_configurations>
 </vm_configuration>

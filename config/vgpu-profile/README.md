@@ -6,6 +6,11 @@ This document summarizes the SR-IOV resource allocation profile for Intel Battle
 
 - **bmg-idv-profile.xml** - IDV workload optimized (fewer, high-performance VFs)
 
+## Other Available Profile Files
+
+- **igpu-idv-profile.xml** - iGPU IDV resource profile
+- **igpu-spice-profile.xml** - iGPU SPICE resource profile
+
 ---
 
 ## Physical Function (PF) Resources

@@ -1,10 +1,16 @@
 # VM Config Notes
 
-This folder contains VM XML definitions used by `scripts/launch-vm.sh`.
+This folder contains VM XML definitions used by `scripts/launch-vm.sh` and `scripts/launch-vm-libvirt.sh`.
 
 ## VM definition files
 
-- `bmg-idv-config.xml`: IDV VM examples
+| File | Target Platform | Display Mode | Description |
+| --- | --- | --- | --- |
+| `bmg-idv-config.xml` | Intel Battlemage discrete GPU | IDV | VM definitions optimized for Battlemage dGPU IDV workflows. |
+| `igpu-idv-config.xml` | Intel Core integrated GPU platforms | IDV | VM definitions for iGPU IDV workflows across supported Intel Core products. See release notes for the exact supported product list. |
+| `igpu-spice-config.xml` | Intel Core integrated GPU platforms | SPICE | VM definitions for iGPU SPICE workflows when remote display/streaming access is preferred over local IDV rendering. |
+
+IDV is intended for local accelerated display workflows, while SPICE is intended for remote display workflows.
 
 ## Required fields (per `<vm>`)
 
@@ -23,13 +29,14 @@ Each VM entry should include:
 - `os_type`: `windows` or `ubuntu` (controls OVMF/disk launch behavior)
 - `ssh_port`: host-side SSH forward port used by `--network localhost`
 - `monitor_port`: enables QEMU monitor telnet (`-monitor telnet:...`)
-- `cpu_id`: optional CPU pinning/selection field consumed by launch flow
+- `cpu_assignment`: optional CPU pinning range/list (for example `0-3` or `0-3,8-11`)
+- `usb_mouse_hostbus` and `usb_mouse_hostport`: optional USB mouse passthrough mapping
 - `description`: free text used as metadata/fallback hint
 
 ## Network modes
 
 - `dynamic`: tap networking
-- `localhost`: user networking with `hostfwd=tcp::ssh_port-:22`
+- `localhost`: user networking with `hostfwd=tcp::ssh_port-:22` (requires numeric `ssh_port`)
 
 ## Display configuration schema
 
@@ -41,6 +48,7 @@ Display values are resolved in this order:
 
 Supported display tags:
 
+- `display_mode`: `idv` (default), `spice`, or `spice-gtk`
 - `fullscreen`
 - `show_fps`
 - `max_outputs`
@@ -48,8 +56,15 @@ Supported display tags:
 - `render_sync`
 - `hw_cursor`
 - `input`
+- `spice_port`: SPICE port used by `-spice port=...` (falls back to `5900 + vm_id`)
 
 Boolean tags accept common forms (`on/off`, `true/false`, `yes/no`, `1/0`).
+
+Display mode behavior:
+
+- `idv`: `-display gtk,input=...,gl=on,full-screen=...,show-fps=...,hw-cursor=...`
+- `spice`: `-display egl-headless` + `-spice addr=<primary_ip>,port=<spice_port>,disable-ticketing=on`
+- `spice-gtk`: `-display none` + `-spice addr=<primary_ip>,port=<spice_port>,disable-ticketing=on,gl=on,streaming-video=filter,preferred-codec=gstreamer:h264,agent-mouse=on`
 
 ## Connector mapping
 
@@ -67,6 +82,10 @@ Per-VM connector mapping supports one or more connectors:
 Each connector emits into QEMU `-display` as:
 
 - `connectors.<index>=<name>`
+
+Global connector defaults can also be set under:
+
+- `display_configurations/mode[@name='<mode>']/connectors/connector`
 
 Legacy compatibility is still supported for a single connector via `display_connector`.
 
