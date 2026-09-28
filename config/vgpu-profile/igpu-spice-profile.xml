@@ -7,7 +7,7 @@
     Some GGTT size is reserved for PF after boot, so the total GGTT size for VFs is 3328MB
 -->
 <vGPUProfile>
-    <version>1.1</version>
+    <version>1.5</version>
 
     <PFResources>
         <Default>MinimumPFResources</Default>

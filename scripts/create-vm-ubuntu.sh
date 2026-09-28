@@ -28,19 +28,19 @@
 #   -h, --help                Show this help message
 #
 # Author: Intel Graphics SRIOV Team
-# Version: 1.0
+# Version: 1.5
 ################################################################################
 
 set -e
 
 # Color codes for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
-readonly BOLD='\033[1m'
-readonly NC='\033[0m' # No Color
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
 RUN_TIMESTAMP="$(date '+%Y%m%d_%H%M%S')"
 readonly RUN_TIMESTAMP
 readonly LOG_DIR="/var/log/sriov"
@@ -101,11 +101,13 @@ OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS=""
 VM_USERNAME="user"
 VM_PASSWORD="user1234"
+INSTALL_SSH_PORT="${INSTALL_SSH_PORT:-3333}"
 PROXY_URL=""
 FORCE_INSTALL=false
 REBOOT_VM=false
 USE_DKMS=false
 USE_INTERNAL=false
+SRIOV_CONFIG=""
 SHOW_HELP=false
 USE_QCOW2=false
 OUTPUT_VM_IMAGE=""
@@ -135,6 +137,9 @@ show_help() {
     echo "  -o, --output-dir DIR     VM output directory (default: ${DEFAULT_DOWNLOAD_DIR})"
     echo "  -m, --memory MB          VM memory in MB (default: 4096)"
     echo "  -c, --vcpus NUM          Number of vCPUs (default: 4)"
+    echo "  --install-ssh-port PORT  Host port forwarded to the installer's sshd"
+    echo "                           (default: 3333). Pass a free port to allow"
+    echo "                           concurrent VM creations."
     echo "  --download_url <url>     URL to download Ubuntu ISO (saved to --output-dir)"
     echo "                           Default: $DEFAULT_UBUNTU_ISO_URL"
     echo "  --vm-username <name>     Username to create in the guest OS (default: user)"
@@ -148,6 +153,8 @@ show_help() {
     echo "  --qcow2                  Create disk image in qcow2 format (for libvirt/virsh usage)"
     echo "                           Default: raw format (.img) for direct QEMU launch"
     echo "  --dkms                   Use virtualization-dkms install mode instead of virtualization"
+    echo "  --config CONFIG          SR-IOV config override passed to install-host.sh"
+    echo "                           (sriov_i915|sriov_xe|baremetal); default: auto-detect"
     echo "  --proxy <url>            HTTP/HTTPS proxy URL (e.g., http://proxy.example.com:911)"
     echo
     echo -e "${BOLD}Examples:${NC}"
@@ -570,19 +577,24 @@ set_hugepages() {
     echo
 }
 
-# Detect VFIO PCI host device from available VGA controllers
-# Prefers non-primary functions (e.g. .1, .2) and falls back to first VGA device.
+# Detect an Intel GPU VF already bound to vfio-pci, for passthrough during install.
+# Restricting to vendor 8086 and to devices already vfio-pci-bound (i.e. provisioned by
+# provision-sriov.sh beforehand) avoids grabbing an unrelated or still-host-owned GPU.
+# Prefers non-primary functions (e.g. .1, .2) and falls back to first matching device.
 get_vfio_pci_host() {
     if ! command -v lspci &> /dev/null; then
         return 1
     fi
 
     local selected_slot=""
-    local line slot
+    local line slot driver_link
 
     while IFS= read -r line; do
         [[ -n "$line" ]] || continue
         slot="${line%% *}"
+
+        driver_link=$(readlink -f "/sys/bus/pci/devices/${slot}/driver" 2>/dev/null || true)
+        [[ "$(basename "$driver_link" 2>/dev/null)" == "vfio-pci" ]] || continue
 
         # Prefer VF-like functions (non-.0)
         if [[ "$slot" =~ \.[1-9]$ ]]; then
@@ -590,20 +602,15 @@ get_vfio_pci_host() {
             break
         fi
 
-        # Keep first VGA as fallback
+        # Keep first vfio-pci-bound Intel VGA device as fallback
         if [[ -z "$selected_slot" ]]; then
             selected_slot="$slot"
         fi
-    done < <(lspci | grep -i "VGA compatible controller")
+    done < <(lspci -D | grep -i "VGA compatible controller" | grep -i "Intel")
 
     [[ -n "$selected_slot" ]] || return 1
 
-    # Normalize to full domain form expected by vfio (0000:BB:DD.F)
-    if [[ "$selected_slot" =~ ^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$ ]]; then
-        echo "$selected_slot"
-    else
-        echo "0000:$selected_slot"
-    fi
+    echo "$selected_slot"
 }
 
 # Wait for SSH to be available on VM
@@ -640,7 +647,7 @@ wait_for_ssh() {
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=2 \
-            -p 3333 "${VM_USERNAME}@localhost" "echo SSH_READY" 2>/dev/null | grep -q "SSH_READY"; then
+            -p "${INSTALL_SSH_PORT}" "${VM_USERNAME}@localhost" "echo SSH_READY" 2>/dev/null | grep -q "SSH_READY"; then
             print_success "SSH is now accessible"
             return 0
         fi
@@ -699,7 +706,7 @@ run_post_boot_provisioning() {
     print_info "  Directory size: $dir_size"
 
     # Copy entire toolkit directory to guest (recursive)
-    if SSHPASS="$VM_PASSWORD" sshpass -e scp -r -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P 3333 "$toolkit_dir" "${VM_USERNAME}@localhost:/tmp/" 2>/dev/null; then
+    if SSHPASS="$VM_PASSWORD" sshpass -e scp -r -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${INSTALL_SSH_PORT}" "$toolkit_dir" "${VM_USERNAME}@localhost:/tmp/" 2>/dev/null; then
         print_success "Toolkit directory copied successfully to /tmp/$toolkit_name"
     else
         print_error "Failed to copy toolkit directory"
@@ -728,11 +735,16 @@ run_post_boot_provisioning() {
         install_cmd="${install_cmd} --internal"
         display_cmd="${display_cmd} --internal"
     fi
+    if [[ -n "$SRIOV_CONFIG" ]]; then
+        install_cmd="${install_cmd} --config $SRIOV_CONFIG"
+        display_cmd="${display_cmd} --config $SRIOV_CONFIG"
+        print_info "  Config override: $SRIOV_CONFIG"
+    fi
     print_info "  Command: $display_cmd"
     echo
 
     # Execute setup script via SSH from the toolkit directory
-    if SSHPASS="$VM_PASSWORD" sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 3333 "${VM_USERNAME}@localhost" "$install_cmd"; then
+    if SSHPASS="$VM_PASSWORD" sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p "${INSTALL_SSH_PORT}" "${VM_USERNAME}@localhost" "$install_cmd"; then
         echo
         print_success "Setup script executed successfully"
         return 0
@@ -753,7 +765,7 @@ reboot_vm_guest() {
     local reboot_cmd="printf '%s' '$vm_password_b64' | base64 -d | sudo -S -p '' reboot"
     local ssh_output
 
-    ssh_output=$(SSHPASS="$VM_PASSWORD" sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p 3333 "${VM_USERNAME}@localhost" "$reboot_cmd" 2>&1)
+    ssh_output=$(SSHPASS="$VM_PASSWORD" sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p "${INSTALL_SSH_PORT}" "${VM_USERNAME}@localhost" "$reboot_cmd" 2>&1)
     local ssh_status=$?
 
     if [[ $ssh_status -eq 0 ]]; then
@@ -782,7 +794,7 @@ shutdown_vm_guest() {
     local shutdown_cmd="printf '%s' '$vm_password_b64' | base64 -d | sudo -S -p '' shutdown -h now"
     local ssh_output
 
-    ssh_output=$(SSHPASS="$VM_PASSWORD" sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p 3333 "${VM_USERNAME}@localhost" "$shutdown_cmd" 2>&1)
+    ssh_output=$(SSHPASS="$VM_PASSWORD" sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p "${INSTALL_SSH_PORT}" "${VM_USERNAME}@localhost" "$shutdown_cmd" 2>&1)
     local ssh_status=$?
 
     if [[ $ssh_status -eq 0 ]]; then
@@ -808,7 +820,7 @@ print_vm_access_info() {
     echo -e "${GREEN}✓ VM reboot completed${NC}"
     echo
     echo -e "${BLUE}Access your VM:${NC}"
-    echo -e "  ${BOLD}SSH:${NC} ssh -p 3333 ${VM_USERNAME}@localhost"
+    echo -e "  ${BOLD}SSH:${NC} ssh -p ${INSTALL_SSH_PORT} ${VM_USERNAME}@localhost"
     echo -e "  ${BOLD}Password:${NC} (as specified with --vm-password)"
     echo
     echo -e "  ${BOLD}Display:${NC} GTK window should be visible"
@@ -833,6 +845,8 @@ boot_vm() {
     local run_background="${10:-false}"
     local vfio_host=""
 
+    # A VF must already be bound to vfio-pci here, otherwise no GPU is passed
+    # into the VM and install-host.sh's lspci-based GPU detection will fail.
     vfio_host=$(get_vfio_pci_host 2>/dev/null || true)
 
     # Serial console log: one file per boot phase, written to the same dir as the script log
@@ -867,9 +881,38 @@ boot_vm() {
     print_message "Boot VM" "${messages[@]}"
     echo >&2
 
+    # Recover display vars stripped by sudo by reading the user's active session via /proc.
+    # This handles X11 (Ubuntu 24) and Wayland/XWayland (Ubuntu 26+) without path guessing.
+    local display_env_args=()
+    if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
+        [[ -n "${DISPLAY:-}"         ]] && display_env_args+=("DISPLAY=${DISPLAY}")
+        [[ -n "${XAUTHORITY:-}"      ]] && display_env_args+=("XAUTHORITY=${XAUTHORITY}")
+        [[ -n "${WAYLAND_DISPLAY:-}" ]] && display_env_args+=("WAYLAND_DISPLAY=${WAYLAND_DISPLAY}")
+        [[ -n "${WAYLAND_DISPLAY:-}" && -n "${XDG_RUNTIME_DIR:-}" ]] && display_env_args+=("XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}")
+    elif [[ -n "${SUDO_USER:-}" ]]; then
+        local pid env_content=""
+        while IFS= read -r pid; do
+            env_content=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null)
+            grep -q "^DISPLAY=" <<< "$env_content" && break
+            env_content=""
+        done < <(pgrep -u "$SUDO_USER" 2>/dev/null)
+        if [[ -n "$env_content" ]]; then
+            local v val
+            for v in DISPLAY XAUTHORITY WAYLAND_DISPLAY; do
+                val=$(grep "^${v}=" <<< "$env_content" | head -1 | cut -d= -f2-)
+                [[ -n "$val" ]] && display_env_args+=("${v}=${val}")
+            done
+            # XDG_RUNTIME_DIR is only needed to locate the Wayland socket
+            if grep -q "^WAYLAND_DISPLAY=" <<< "$env_content"; then
+                val=$(grep "^XDG_RUNTIME_DIR=" <<< "$env_content" | head -1 | cut -d= -f2-)
+                [[ -n "$val" ]] && display_env_args+=("XDG_RUNTIME_DIR=${val}")
+            fi
+        fi
+    fi
+
     # Build QEMU command
     local qemu_cmd=(
-        "sudo" "-E" "qemu-system-x86_64"
+        "sudo" "env" "${display_env_args[@]}" "qemu-system-x86_64"
         "-m" "$vm_memory"
         "-cpu" "host,host-phys-bits=on,host-phys-bits-limit=39"
         "-enable-kvm"
@@ -893,7 +936,7 @@ boot_vm() {
     qemu_cmd+=(
         "-drive" "file=${vm_img},format=${disk_fmt},cache=none,if=virtio"
         "-net" "nic,netdev=net0"
-        "-netdev" "user,id=net0,hostfwd=tcp::3333-:22"
+        "-netdev" "user,id=net0,hostfwd=tcp::${INSTALL_SSH_PORT}-:22"
         "-device" "virtio-vga"
     )
 
@@ -909,7 +952,8 @@ boot_vm() {
     if [[ -n "$vfio_host" ]]; then
         qemu_cmd+=("-device" "vfio-pci,host=${vfio_host}")
     else
-        print_warn "No VGA compatible controller found for vfio-pci passthrough; continuing without vfio device"
+        print_warn "No Intel GPU VF bound to vfio-pci found; continuing without GPU passthrough"
+        print_info "Run provision-sriov.sh to create and bind a VF before creating the VM to enable GPU passthrough at install time"
     fi
 
     # Boot method: kernel+initrd with autoinstall, or CDROM fallback
@@ -963,7 +1007,7 @@ boot_vm() {
         print_success "VM started in background (PID: $qemu_pid)"
         echo
         echo -e "${BLUE}Access your VM:${NC}"
-        echo -e "  ${BOLD}SSH:${NC} ssh -p 3333 ${VM_USERNAME}@localhost"
+        echo -e "  ${BOLD}SSH:${NC} ssh -p ${INSTALL_SSH_PORT} ${VM_USERNAME}@localhost"
         echo -e "  ${BOLD}Password:${NC} (as specified with --vm-password)"
         echo
         echo -e "  ${BOLD}Display:${NC} GTK window should be visible"
@@ -978,16 +1022,24 @@ boot_vm() {
         echo
         return 0
     else
-        # Run blocking
-        if "${qemu_cmd[@]}"; then
-            print_success "QEMU VM completed successfully"
-            return 0
-        else
-            print_error "QEMU VM failed with exit code $?"
-            print_info "Serial console log: $serial_log"
-            print_info "Script log:         $LOG_FILE"
+        # Run blocking; catch SIGINT locally to detect Ctrl+C even when QEMU exits 0 (Wayland GTK).
+        local qemu_exit=0
+        local qemu_interrupted=false
+        trap 'qemu_interrupted=true' INT
+        "${qemu_cmd[@]}" || qemu_exit=$?
+        trap 'cleanup_on_exit' INT
+        if [[ "$qemu_interrupted" == true || $qemu_exit -eq 130 ]]; then
+            print_warn "QEMU terminated by user (Ctrl+C)"
             return 1
         fi
+        if [[ $qemu_exit -eq 0 ]]; then
+            print_success "QEMU VM completed successfully"
+            return 0
+        fi
+        print_error "QEMU VM failed with exit code $qemu_exit"
+        print_info "Serial console log: $serial_log"
+        print_info "Script log:         $LOG_FILE"
+        return 1
     fi
 }
 
@@ -1209,6 +1261,14 @@ parse_arguments() {
                 VCPUS="$2"
                 shift 2
                 ;;
+            --install-ssh-port)
+                if [[ ! "$2" =~ ^[0-9]+$ ]] || (( $2 < 1 || $2 > 65535 )); then
+                    print_error "--install-ssh-port must be a port number 1-65535, got '$2'"
+                    exit 1
+                fi
+                INSTALL_SSH_PORT="$2"
+                shift 2
+                ;;
             --ovmf-code)
                 OVMF_CODE="$2"
                 shift 2
@@ -1232,6 +1292,14 @@ parse_arguments() {
             --dkms)
                 USE_DKMS=true
                 shift
+                ;;
+            --config)
+                if [[ ! "$2" =~ ^(sriov_i915|sriov_xe|baremetal)$ ]]; then
+                    print_error "--config requires one of: sriov_i915, sriov_xe, baremetal"
+                    exit 1
+                fi
+                SRIOV_CONFIG="$2"
+                shift 2
                 ;;
             --internal)
                 USE_INTERNAL=true
@@ -1492,10 +1560,58 @@ LAUNCH_VM_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/launch-vm.s
 
 echo "[$RUN_TIMESTAMP] create-vm-ubuntu.sh completed"
 echo "[INFO] Log file available at: $LOG_FILE"
+
+# Update VM config file automatically
+update_vm_config() {
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local config_manager="${script_dir}/vm-config-manager.sh"
+
+    if [[ ! -f "$config_manager" ]]; then
+        print_warn "VM config manager script not found: $config_manager"
+        return 1
+    fi
+
+    # Source the config manager
+    # shellcheck disable=SC1090
+    source "$config_manager"
+
+    # Get next available VM ID, ports, and MAC
+    local vm_id
+    local ssh_port
+    local monitor_port
+    local mac_address
+
+    vm_id=$(get_next_vm_id)
+    ssh_port=$(get_next_ssh_port)
+    monitor_port=$(get_next_monitor_port)
+    mac_address=$(generate_mac_address "$vm_id")
+
+    print_info "Updating VM configuration..."
+    echo "[INFO] VM ID: $vm_id"
+    echo "[INFO] SSH Port: $ssh_port"
+    echo "[INFO] Monitor Port: $monitor_port"
+    echo "[INFO] MAC Address: $mac_address"
+
+    # Add VM to config
+    if add_vm_to_config "$vm_id" "$VM_NAME" "ubuntu" "$VM_MEMORY" "$VCPUS" "2" \
+                     "$mac_address" "$OUTPUT_VM_IMAGE" "$ssh_port" "$monitor_port" \
+                     "Ubuntu 24.04 Virtual Machine"; then
+        echo "[OK   ] VM configuration updated successfully"
+    else
+        print_warn "Failed to update VM configuration automatically"
+        echo "[INFO] You can manually add this VM to the config file"
+        return 1
+    fi
+}
+
 if [[ -n "$OUTPUT_VM_IMAGE" ]]; then
     echo "[INFO] VM image output directory : ${DOWNLOAD_DIR:-$DEFAULT_DOWNLOAD_DIR}"
     echo "[INFO] VM image created at       : $OUTPUT_VM_IMAGE"
+    # Config tracking is best-effort; under set -e a failure here must not fail an already-completed VM creation.
+    update_vm_config || true
 fi
+
 echo "[INFO] To launch the VM, run launch-vm.sh with the config file, for example:"
 echo "[INFO] sudo $LAUNCH_VM_SCRIPT_PATH -d 3 -c config/vm-config/bmg-idv-config.xml"
 

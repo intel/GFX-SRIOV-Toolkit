@@ -4,7 +4,7 @@
 <!-- All rights reserved. -->
 <vm_configuration>
     <metadata>
-        <version>1.4</version>
+        <version>1.5</version>
         <description>Virtual Machine Configuration (SPICE)</description>
     </metadata>
 
@@ -15,9 +15,28 @@
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
             <cpu_threads>2</cpu_threads>
-            <!--cpu_assignment>0-3</cpu_assignment-->
-            <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
-            <usb_mouse_hostport>6.2</usb_mouse_hostport-->
+            <!--<thread_affinity>
+                <vcpu_cpus>0-3</vcpu_cpus>
+                <main_thread>6</main_thread>
+            </thread_affinity>-->
+            <!--<usb_devices>
+                <usb_device type="mouse">
+                    <hostbus>003</hostbus>
+                    <hostport>1.1</hostport>
+                </usb_device>
+                <usb_device type="keyboard">
+                    <hostbus>003</hostbus>
+                    <hostport>1.2</hostport>
+                </usb_device>
+                <usb_device type="audio">
+                    <hostbus>003</hostbus>
+                    <hostport>1.3</hostport>
+                </usb_device>
+                <usb_device type="camera">
+                    <hostbus>003</hostbus>
+                    <hostport>1.4</hostport>
+                </usb_device>
+            </usb_devices>-->
             <mac_address>EE:DD:BB:DD:AA:11</mac_address>
             <disk_path>/data/vm-images/win11_1.qcow2</disk_path>
             <ssh_port>1101</ssh_port>
@@ -34,9 +53,28 @@
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
             <cpu_threads>2</cpu_threads>
-            <!--cpu_assignment>4-7</cpu_assignment-->
-            <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
-            <usb_mouse_hostport>6.4</usb_mouse_hostport-->
+            <!--<thread_affinity>
+                <vcpu_cpus>4-7</vcpu_cpus>
+                <main_thread>10</main_thread>
+            </thread_affinity>-->
+            <!--<usb_devices>
+                <usb_device type="mouse">
+                    <hostbus>003</hostbus>
+                    <hostport>1.1</hostport>
+                </usb_device>
+                <usb_device type="keyboard">
+                    <hostbus>003</hostbus>
+                    <hostport>1.2</hostport>
+                </usb_device>
+                <usb_device type="audio">
+                    <hostbus>003</hostbus>
+                    <hostport>1.3</hostport>
+                </usb_device>
+                <usb_device type="camera">
+                    <hostbus>003</hostbus>
+                    <hostport>1.4</hostport>
+                </usb_device>
+            </usb_devices>-->
             <mac_address>EE:DD:BB:DD:AA:12</mac_address>
             <disk_path>/data/vm-images/win11_2.qcow2</disk_path>
             <ssh_port>1102</ssh_port>
@@ -53,9 +91,28 @@
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
             <cpu_threads>2</cpu_threads>
-            <!--cpu_assignment>8-11</cpu_assignment-->
-            <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
-            <usb_mouse_hostport>6.1</usb_mouse_hostport-->
+            <!--<thread_affinity>
+                <vcpu_cpus>8-11</vcpu_cpus>
+                <main_thread>14</main_thread>
+            </thread_affinity>-->
+            <!--<usb_devices>
+                <usb_device type="mouse">
+                    <hostbus>003</hostbus>
+                    <hostport>1.1</hostport>
+                </usb_device>
+                <usb_device type="keyboard">
+                    <hostbus>003</hostbus>
+                    <hostport>1.2</hostport>
+                </usb_device>
+                <usb_device type="audio">
+                    <hostbus>003</hostbus>
+                    <hostport>1.3</hostport>
+                </usb_device>
+                <usb_device type="camera">
+                    <hostbus>003</hostbus>
+                    <hostport>1.4</hostport>
+                </usb_device>
+            </usb_devices>-->
             <mac_address>EE:DD:BB:DD:AA:13</mac_address>
             <disk_path>/data/vm-images/ubuntu24_1.img</disk_path>
             <ssh_port>1103</ssh_port>
@@ -72,9 +129,28 @@
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
             <cpu_threads>2</cpu_threads>
-            <!--cpu_assignment>12-15</cpu_assignment-->
-            <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
-            <usb_mouse_hostport>6.3</usb_mouse_hostport-->
+            <!--<thread_affinity>
+                <vcpu_cpus>12-15</vcpu_cpus>
+                <main_thread>18</main_thread>
+            </thread_affinity>-->
+            <!--<usb_devices>
+                <usb_device type="mouse">
+                    <hostbus>003</hostbus>
+                    <hostport>1.1</hostport>
+                </usb_device>
+                <usb_device type="keyboard">
+                    <hostbus>003</hostbus>
+                    <hostport>1.2</hostport>
+                </usb_device>
+                <usb_device type="audio">
+                    <hostbus>003</hostbus>
+                    <hostport>1.3</hostport>
+                </usb_device>
+                <usb_device type="camera">
+                    <hostbus>003</hostbus>
+                    <hostport>1.4</hostport>
+                </usb_device>
+            </usb_devices>-->
             <mac_address>EE:DD:BB:DD:AA:14</mac_address>
             <disk_path>/data/vm-images/ubuntu24_2.img</disk_path>
             <ssh_port>1104</ssh_port>

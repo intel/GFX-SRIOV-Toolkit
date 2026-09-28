@@ -148,6 +148,46 @@ auto_press_boot_key() {
     done
 }
 
+update_vm_config() {
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local config_manager="${script_dir}/vm-config-manager.sh"
+
+    if [[ ! -f "$config_manager" ]]; then
+        print_warn "VM config manager script not found: $config_manager"
+        return 1
+    fi
+
+    # shellcheck disable=SC1090
+    source "$config_manager"
+
+    local vm_id
+    local ssh_port
+    local monitor_port
+    local mac_address
+
+    vm_id=$(get_next_vm_id)
+    ssh_port=$(get_next_ssh_port)
+    monitor_port=$(get_next_monitor_port)
+    mac_address=$(generate_mac_address "$vm_id")
+
+    print_info "Updating VM configuration..."
+    echo -e "${BLUE}[INFO ]${NC} VM ID: $vm_id"
+    echo -e "${BLUE}[INFO ]${NC} SSH Port: $ssh_port"
+    echo -e "${BLUE}[INFO ]${NC} Monitor Port: $monitor_port"
+    echo -e "${BLUE}[INFO ]${NC} MAC Address: $mac_address"
+
+    if add_vm_to_config "$vm_id" "$vm_name" "windows" "$vm_memory" "$vcpus" "2" \
+                     "$mac_address" "$vm_img" "$ssh_port" "$monitor_port" \
+                     "Windows Virtual Machine"; then
+        echo -e "${GREEN}[OK   ]${NC} VM configuration updated successfully"
+    else
+        print_warn "Failed to update VM configuration automatically"
+        echo -e "${BLUE}[INFO ]${NC} You can manually add this VM to the config file"
+        return 1
+    fi
+}
+
 main() {
     local iso_path=""
     local vm_size="100G"
@@ -312,6 +352,9 @@ main() {
     echo
     print_success "Windows VM creation completed"
     echo -e "${BLUE}[INFO ]${NC} VM image output directory : ${output_dir}"
+
+    update_vm_config
+
     echo -e "${BLUE}[INFO ]${NC} To launch the VM, run launch-vm.sh with the config file, for example:"
     echo -e "${BLUE}[INFO ]${NC}   scripts/launch-vm.sh -d 1 -c config/vm-config/bmg-idv-config.xml"
 }

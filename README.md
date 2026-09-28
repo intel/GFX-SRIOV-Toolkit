@@ -45,8 +45,7 @@ See [license.md](license.md) (MIT).
 | --- | --- | --- |
 | **VM Provisioning** | Create and prepare guest virtual machine images | `scripts/create-vm-ubuntu.sh`<br>`scripts/create-vm-win.sh` |
 | **SR-IOV Configuration** | Configure Virtual Functions (VFs) and GPU resource allocation | `scripts/provision-sriov.sh`<br>`config/vgpu-profile/` |
-| **VM Launch (Direct QEMU)** | Launch and manage VMs using direct QEMU-based workflow | `scripts/launch-vm.sh` |
-| **VM Launch (Libvirt)** | Launch and manage VMs using libvirt (persistent domains, multi-display) | `scripts/launch-vm-libvirt.sh` |
+| **VM Launch** | Launch and manage VMs directly via QEMU or as libvirt-managed domains (`--virsh`) | `scripts/launch-vm.sh` |
 | **Configuration Files** | Defines VM behavior and SR-IOV profiles | `config/vm-config/`<br>`config/vgpu-profile/` |
 | **Validation & Debug** | Validate setup and inspect SR-IOV resource allocation | `test-suite/validate-environment.sh`<br>`test-suite/read-sriov-resources.sh` |
 

@@ -1,6 +1,6 @@
 # VM Config Notes
 
-This folder contains VM XML definitions used by `scripts/launch-vm.sh` and `scripts/launch-vm-libvirt.sh`.
+This folder contains VM XML definitions used by `scripts/launch-vm.sh`, both directly via QEMU and as libvirt-managed domains (`--virsh`).
 
 ## VM definition files
 
@@ -29,8 +29,10 @@ Each VM entry should include:
 - `os_type`: `windows` or `ubuntu` (controls OVMF/disk launch behavior)
 - `ssh_port`: host-side SSH forward port used by `--network localhost`
 - `monitor_port`: enables QEMU monitor telnet (`-monitor telnet:...`)
-- `cpu_assignment`: optional CPU pinning range/list (for example `0-3` or `0-3,8-11`)
-- `usb_mouse_hostbus` and `usb_mouse_hostport`: optional USB mouse passthrough mapping
+- `thread_affinity`: optional CPU pinning/thread-affinity block:
+  - `vcpu_cpus`: CPU pinning range/list for vCPU threads (for example `0-3` or `0-3,8-11`)
+  - `main_thread`: CPU for the QEMU main/emulator thread
+- `usb_devices`: optional list of `usb_device` entries for USB passthrough, each with a `type` attribute and `hostbus`/`hostport` mapping (replaces the old single `usb_mouse_hostbus`/`usb_mouse_hostport` fields). Direct QEMU launches use `hostbus`/`hostport` (QEMU `usb-host` bus/port path); `--virsh` launches use `hostbus`/`hostdevice` (libvirt native `<hostdev>` bus/device number from `lsusb`).
 - `description`: free text used as metadata/fallback hint
 
 ## Network modes

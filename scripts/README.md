@@ -8,8 +8,8 @@ This directory contains the VM lifecycle and SR-IOV provisioning scripts used by
 | --- | --- | --- | --- |
 | 1 | **VM Creation** | Create and prepare guest virtual machine images | `scripts/create-vm-ubuntu.sh`<br>`scripts/create-vm-win.sh` |
 | 2 | **SR-IOV Provisioning** | Configure Virtual Functions (VFs) and GPU resource allocation | `scripts/provision-sriov.sh`<br>`config/vgpu-profile/` |
-| 3 | **VM Launch (QEMU CMDLINE)** | Launch and manage VMs using direct QEMU-based workflow | `scripts/launch-vm.sh` |
-| 4 | **VM Launch (Libvirt)** | Launch and manage VMs using libvirt (persistent domains, multi-display) | `scripts/launch-vm-libvirt.sh` |
+| 3 | **VM Launch** | Launch and manage VMs directly via QEMU or as libvirt-managed domains (`--virsh`) | `scripts/launch-vm.sh` |
+| 4 | **VM Config Manager** | Manage VM entries in any XML config; used by create/delete VM scripts | `scripts/vm-config-manager.sh` |
 
 ## Prerequisites
 
@@ -121,14 +121,17 @@ sudo ./scripts/provision-sriov.sh -n 2 -c config/vgpu-profile/bmg-idv-profile.xm
 sudo ./scripts/provision-sriov.sh --disable
 ```
 
-## 3) VM Launch (QEMU CMDLINE)
+## 3) VM Launch
 
 Script: `scripts/launch-vm.sh`
 
 Purpose:
-- Launches one or many VMs defined in XML
+- Launches one or many VMs defined in XML, either directly via QEMU (default) or as
+  libvirt-managed domains via virsh (`--virsh`)
 - Supports launching all VMs, first N VMs, or a specific VM ID
 - Supports dynamic/tap or localhost/user networking modes
+- `--virsh` mode adds persistent domain management, NVRAM isolation, and
+  optional virt-manager integration
 
 Common options:
 - `-h, --help`: Show help
@@ -136,10 +139,13 @@ Common options:
 - `-n, --num-vms NUM`: Launch first `NUM` VMs
 - `-d, --vm-id ID`: Launch only VM with specified ID
 - `--network MODE`: `localhost` (default) or `dynamic`
+- `--virsh`: Launch as libvirt-managed domains via virsh instead of direct QEMU
+- `--virt-manager`: Open virt-manager after starting VMs (requires `--virsh`)
+- `--define-only`: Define VMs in libvirt without starting them (requires `--virsh`)
 
 Examples:
 ```bash
-# Launch all VMs from config
+# Launch all VMs from config directly via QEMU
 ./scripts/launch-vm.sh -c config/vm-config/bmg-idv-config.xml
 
 # Launch only VM ID 3
@@ -147,36 +153,76 @@ Examples:
 
 # Launch one VM in dynamic networking mode
 ./scripts/launch-vm.sh -c config/vm-config/bmg-idv-config.xml -n 1 --network dynamic
+
+# Launch all VMs as libvirt-managed domains
+./scripts/launch-vm.sh -c config/vm-config/bmg-idv-config.xml --virsh
+
+# Launch via virsh and open virt-manager for interactive management
+./scripts/launch-vm.sh -c config/vm-config/bmg-idv-config.xml --virsh --virt-manager
+
+# Define libvirt domains without starting them
+./scripts/launch-vm.sh -c config/vm-config/bmg-idv-config.xml --virsh --define-only
 ```
 
 VM config details:
 - `config/vm-config/README.md`
 
-## 4) VM Launch (Libvirt)
+## 4) VM Config Manager
 
-Script: `scripts/launch-vm-libvirt.sh`
+Script: `scripts/vm-config-manager.sh`
 
 Purpose:
-- Provides an alternative launch path using libvirt (virsh) alongside direct-QEMU `launch-vm.sh`
-- Enables persistent VM domain management, NVRAM isolation, and multi-display support
-- Uses the same XML configuration files as `launch-vm.sh`
+- Manages VM entries in any XML config file (defaults to `config/vm-config/vm-master-config.xml`)
+- Initializes a runtime config from the `vm-master-config.xml.template` + live host discovery on first use
+- Used by VM lifecycle scripts (create, delete) to keep the config in sync automatically
+
+Functions:
+- `init_master_config` - Build a runtime config from `.template` + host discovery
+- `ensure_config_exists` - First-use guard called from every read/write path
+- `discover_libvirt_vms` - Import libvirt-managed VMs into the config
+- `discover_qemu_processes` - Import direct-QEMU VMs into the config
+- `add_vm_to_config` - Add a VM entry
+- `update_vm_in_config` - Update one or more fields of an existing VM entry
+- `remove_vm_from_config` - Remove a VM entry
+- `list_vms_in_config` - List all VMs in the config
+- `get_next_vm_id` - Get the next available VM ID (gap-filling)
+- `get_next_ssh_port` - Get the next available SSH port (gap-filling)
+- `get_next_monitor_port` - Get the next available monitor port (gap-filling)
+- `generate_mac_address` - Generate a unique MAC address for a VM
 
 Examples:
 ```bash
-# Launch all VMs
-./scripts/launch-vm-libvirt.sh -c config/vm-config/bmg-idv-config.xml
+# Build the runtime config from template + host discovery
+./scripts/vm-config-manager.sh init-config
 
-# Launch first 2 VMs
-./scripts/launch-vm-libvirt.sh -c config/vm-config/bmg-idv-config.xml -n 2
+# Rebuild the runtime config, discarding the current file
+./scripts/vm-config-manager.sh init-config --force
 
-# Launch a specific VM by ID
-./scripts/launch-vm-libvirt.sh -c config/vm-config/bmg-idv-config.xml -d 1
+# List all VMs in config
+./scripts/vm-config-manager.sh list-vms
 
-# Launch VMs and open virt-manager for interactive management
-./scripts/launch-vm-libvirt.sh -c config/vm-config/bmg-idv-config.xml --virt-manager
+# Get next available VM ID / SSH port / monitor port
+./scripts/vm-config-manager.sh next-vm-id
+./scripts/vm-config-manager.sh next-ssh-port
+./scripts/vm-config-manager.sh next-monitor-port
 
-# Define VMs in libvirt without starting them
-./scripts/launch-vm-libvirt.sh -c config/vm-config/bmg-idv-config.xml --define-only
+# Generate a unique MAC address for VM ID 5
+./scripts/vm-config-manager.sh generate-mac 5
+
+# Manually add a VM entry
+./scripts/vm-config-manager.sh add-vm 5 ubuntu3 ubuntu 8192 4 2 "EE:DD:BB:42:AA:05" "/data/vm-images/ubuntu24_3.img" 1105 1115 "Ubuntu 24.04 Virtual Machine"
+
+# Update a single field
+./scripts/vm-config-manager.sh update-vm ubuntu3 memory=16384
+
+# Update multiple fields in one go
+./scripts/vm-config-manager.sh update-vm ubuntu3 memory=16384 cpu_cores=8 description="High-perf build VM"
+
+# Remove a VM entry
+./scripts/vm-config-manager.sh remove-vm ubuntu3
+
+# Use a custom config file (overrides default path)
+CONFIG_FILE=/path/to/custom-config.xml ./scripts/vm-config-manager.sh list-vms
 ```
 
 ## Typical End-to-End Flow

@@ -14,7 +14,10 @@
             <os_type>windows</os_type>
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
-            <cpu_threads>2</cpu_threads>
+	    <cpu_threads>2</cpu_threads>
+	    <!--cpu_assignment>0-3</cpu_assignment>-->
+	    <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
+	    <usb_mouse_hostport>6.2</usb_mouse_hostport>-->
             <mac_address>EE:DD:BB:DD:AA:11</mac_address>
             <disk_path>/data/vm-images/win11_1.qcow2</disk_path>
             <ssh_port>1101</ssh_port>
@@ -36,6 +39,9 @@
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
             <cpu_threads>2</cpu_threads>
+	    <!--cpu_assignment>4-7</cpu_assignment>-->
+	    <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
+	    <usb_mouse_hostport>6.4</usb_mouse_hostport>-->
             <mac_address>EE:DD:BB:DD:AA:12</mac_address>
             <disk_path>/data/vm-images/win11_2.qcow2</disk_path>
             <ssh_port>1102</ssh_port>
@@ -54,6 +60,9 @@
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
             <cpu_threads>2</cpu_threads>
+	    <!--cpu_assignment>8-11</cpu_assignment>-->
+	    <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
+	    <usb_mouse_hostport>6.1</usb_mouse_hostport>-->
             <mac_address>EE:DD:BB:DD:AA:13</mac_address>
             <disk_path>/data/vm-images/ubuntu24_1.img</disk_path>
             <ssh_port>1103</ssh_port>
@@ -72,6 +81,9 @@
             <memory_size>8192</memory_size>
             <cpu_cores>4</cpu_cores>
             <cpu_threads>2</cpu_threads>
+	    <!--cpu_assignment>12-15</cpu_assignment>-->
+	    <!--usb_mouse_hostbus>003</usb_mouse_hostbus>
+	    <usb_mouse_hostport>6.3</usb_mouse_hostport>-->
             <mac_address>EE:DD:BB:DD:AA:14</mac_address>
             <disk_path>/data/vm-images/ubuntu24_2.img</disk_path>
             <ssh_port>1104</ssh_port>
